@@ -1,0 +1,39 @@
+#!/usr/bin/env python3
+
+import os
+from ament_index_python.packages import get_package_share_directory
+from launch import LaunchDescription
+from launch_ros.actions import Node
+from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration
+
+
+def generate_launch_description():
+    # 获取包的共享目录
+    pkg_share = get_package_share_directory('unitree_obstacle_avoidance')
+    
+    # 获取默认参数文件路径
+    default_params_file = os.path.join(pkg_share, 'config', 'mpc_controller_params.yaml')
+    
+    # 声明启动参数
+    params_file_arg = DeclareLaunchArgument(
+        'params_file',
+        default_value=default_params_file,
+        description='参数文件的完整路径'
+    )
+    
+    # 创建MPC控制器节点
+    mpc_controller_node = Node(
+        package='unitree_obstacle_avoidance',
+        executable='mpc_controller_node',
+        name='mpc_controller_node',
+        output='screen',
+        parameters=[LaunchConfiguration('params_file')],
+        emulate_tty=True,
+    )
+    
+    return LaunchDescription([
+        params_file_arg,
+        mpc_controller_node
+    ])
+

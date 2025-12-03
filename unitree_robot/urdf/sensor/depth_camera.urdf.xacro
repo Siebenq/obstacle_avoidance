@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+   <xacro:include filename="$(find unitree_robot)/urdf/common_inertia.xacro" />
+    <xacro:macro name="depth_camera_xacro" params="name parent_link xyz rpy:='0 0 0'">
+        <!-- ============深度相机模块================ -->
+        <link name="${name}_depth_camera_link">
+            <visual>
+                <origin xyz="0 0 0.0" rpy="0 0 0" />
+                <geometry>
+                    <box size="0.025 0.09 0.025" />
+                </geometry>
+                <material name="dark_grey">
+                    <color rgba="0.2 0.2 0.2 1.0"/>
+                </material>
+            </visual>
+            <collision>
+                <origin xyz="0 0 0.0" rpy="0 0 0" />
+                <geometry>
+                    <box size="0.025 0.09 0.025" />
+                </geometry>
+            </collision>
+            <xacro:box_inertia m="0.02" w="0.025" h="0.09" d="0.025" />
+        </link>
+        
+        <link name="${name}_depth_camera_optical_link"></link>
+        
+        <joint name="${name}_depth_camera_optical_joint" type="fixed">
+            <parent link="${name}_depth_camera_link" />
+            <child link="${name}_depth_camera_optical_link" />
+            <origin xyz="0 0 0" rpy="${-pi/2} 0 ${-pi/2}" />
+        </joint>
+
+        <joint name="${name}_depth_camera_joint" type="fixed">
+            <parent link="${parent_link}" />
+            <child link="${name}_depth_camera_link" />
+            <origin xyz="${xyz}" rpy="${rpy}" />
+        </joint>
+    </xacro:macro>
+
+</robot>
+

@@ -1,0 +1,38 @@
+pointcloud_fusion_node:
+  ros__parameters:
+    # 输入话题
+    topic1: "/camera_dog/points"
+    topic2: "/camera_person/points"
+    
+    # 输出话题
+    output_topic: "/pointcloud_fused"
+    
+    # 目标坐标系
+    target_frame: "base_link"
+    
+    # 是否使用坐标变换
+    use_transform: true
+    
+    # 是否使用TF2自动查询变换（推荐）
+    # 如果为true，会忽略下面的手动配置参数，直接从TF树查询
+    use_tf2: true
+    
+    # 从topic2坐标系到topic1坐标系的坐标变换
+    # topic2在topic1的左后方45°、距离0.5m、上方1.6m
+    # 平移（米）
+    # x = -0.5 * cos(45°) = -0.354（后方）
+    # y = 0.5 * sin(45°) = 0.354（左方）
+    # z = 1.6（上方）
+    transform_x: -0.354   # 后方（负X方向）
+    transform_y: 0.354    # 左方（正Y方向）
+    transform_z: 1.6      # 上方（正Z方向）
+    
+    # 旋转（弧度）- Roll, Pitch, Yaw
+    # 两个相机朝向一致，所以旋转角度都为0
+    transform_roll: 0.0
+    transform_pitch: 0.0
+    transform_yaw: 0.0
+    
+    # 队列大小
+    queue_size: 10
+

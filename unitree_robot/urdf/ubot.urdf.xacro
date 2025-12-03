@@ -1,0 +1,86 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="ubot">
+
+
+     <!-- 执行器组件 -->
+    <xacro:include filename="$(find unitree_robot)/urdf/actuator/wheel.urdf.xacro" />
+    <xacro:include filename="$(find unitree_robot)/urdf/actuator/caster.urdf.xacro" />
+    <xacro:include filename="$(find unitree_robot)/urdf/actuator/caster_general.urdf.xacro" />
+    <xacro:include filename="$(find unitree_robot)/urdf/actuator/connecting_rod.urdf.xacro" />
+    <xacro:include filename="$(find unitree_robot)/urdf/actuator/cylinder_base.urdf.xacro" />
+    <!-- Gazebo 插件 -->
+    <xacro:include filename="$(find unitree_robot)/urdf/plugins/gazebo_control_plugin.xacro" />
+    <xacro:gazebo_control_plugin />
+    <xacro:include filename="$(find unitree_robot)/urdf/plugins/gazebo_sensor_plugin.xacro" />
+    <xacro:gazebo_sensor_plugin />
+    <!-- 传感器组件 -->
+    <xacro:include filename="$(find unitree_robot)/urdf/sensor/imu.urdf.xacro" />
+    <xacro:include filename="$(find unitree_robot)/urdf/sensor/camera.urdf.xacro" />
+    <xacro:include filename="$(find unitree_robot)/urdf/sensor/depth_camera.urdf.xacro" />
+
+
+
+     <!-- 主体 -->
+    <xacro:include filename="$(find unitree_robot)/urdf/base.urdf.xacro" />
+    <xacro:base_xacro length="0.12" radius="0.1" />
+
+    <!-- 传感器 -->
+    <xacro:imu_xacro xyz="0 0 0.02" />
+    <xacro:camera_xacro xyz="0.10 0 0.075" />
+
+    <!-- 执行器主动轮+从动轮 -->
+    <xacro:wheel_xacro wheel_name="left" xyz="0 0.10 -0.06" />
+    <xacro:wheel_xacro wheel_name="right" xyz="0 -0.10 -0.06" />
+    <xacro:caster_xacro caster_name="front" xyz="0.08 0.0 -0.076" />
+    <xacro:caster_xacro caster_name="back" xyz="-0.08 0.0 -0.076" />
+
+    <!-- 连接棒：从小车中心连接到圆柱体 -->
+    <!-- 长度0.5m，指向左后方45°（绕Z轴旋转135°）-->
+    <!-- 位置抬高到0.02m，避免挡住圆柱体万向轮 -->
+    <xacro:connecting_rod_xacro 
+        name="auxiliary" 
+        length="0.5" 
+        radius="0.02" 
+        parent_link="base_link" 
+        xyz="0 0 0.02" 
+        rpy="0 0 ${pi*3/4}" />
+
+    <!-- 辅助圆柱体本体：高1.6m，半径0.2m -->
+    <!-- 连接在连接棒末端，z方向偏移-0.08m使圆柱体底部对齐地面 -->
+    <xacro:cylinder_base_xacro 
+        name="auxiliary" 
+        length="1.6" 
+        radius="0.2" 
+        parent_link="auxiliary_rod_link" 
+        xyz="0.5 0 -0.08" />
+
+    <!-- 圆柱体底部的四个万向轮（前后左右） -->
+    <!-- 圆柱体半径0.2m，万向轮分布在四个方向 -->
+    <xacro:caster_general_xacro 
+        caster_name="auxiliary_front" 
+        parent_link="auxiliary_cylinder_link" 
+        xyz="0.15 0.0 0.0" />
+    <xacro:caster_general_xacro 
+        caster_name="auxiliary_back" 
+        parent_link="auxiliary_cylinder_link" 
+        xyz="-0.15 0.0 0.0" />
+    <xacro:caster_general_xacro 
+        caster_name="auxiliary_left" 
+        parent_link="auxiliary_cylinder_link" 
+        xyz="0.0 0.15 0.0" />
+    <xacro:caster_general_xacro 
+        caster_name="auxiliary_right" 
+        parent_link="auxiliary_cylinder_link" 
+        xyz="0.0 -0.15 0.0" />
+
+    <!-- 圆柱体顶部的深度相机 -->
+    <!-- 安装在圆柱体表面（半径0.2m），顶部高度1.6m，朝向世界坐标系前方 -->
+    <!-- 圆柱体旋转了135°，所以在圆柱体坐标系中需要指向-135°方向 -->
+    <!-- x = 0.2*cos(-135°) ≈ -0.141, y = 0.2*sin(-135°) ≈ -0.141 -->
+    <xacro:depth_camera_xacro 
+        name="auxiliary" 
+        parent_link="auxiliary_cylinder_link" 
+        xyz="-0.141 -0.141 1.6" 
+        rpy="0 0 ${-pi*3/4}" />
+
+</robot>

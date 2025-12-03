@@ -1,0 +1,36 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+   <xacro:include filename="$(find unitree_robot)/urdf/common_inertia.xacro" />
+    <xacro:macro name="connecting_rod_xacro" params="name length radius parent_link xyz rpy">
+        <!-- 连接棒（质量极小，不影响运动）-->
+        <link name="${name}_rod_link">
+            <visual>
+                <origin xyz="${length/2.0} 0 0" rpy="0 ${pi/2} 0" />
+                <geometry>
+                    <cylinder length="${length}" radius="${radius}" />
+                </geometry>
+                <material name="grey">
+                    <color rgba="0.5 0.5 0.5 0.8"/>
+                </material>
+            </visual>
+            <collision>
+                <origin xyz="${length/2.0} 0 0" rpy="0 ${pi/2} 0" />
+                <geometry>
+                    <cylinder length="${length}" radius="${radius}" />
+                </geometry>
+            </collision>
+            <!-- 质量设为极小值，不影响小车运动 -->
+            <xacro:cylinder_inertia m="0.001" r="${radius}" h="${length}"/>
+        </link>
+
+        <!-- 连接到父链接 -->
+        <joint name="${name}_rod_joint" type="fixed">
+            <parent link="${parent_link}" />
+            <child link="${name}_rod_link" />
+            <origin xyz="${xyz}" rpy="${rpy}" />
+        </joint>
+
+    </xacro:macro>
+
+</robot>
+

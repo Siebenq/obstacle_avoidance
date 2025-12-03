@@ -1,0 +1,47 @@
+obstacle_detection_node:
+  ros__parameters:
+    # 输入话题（融合后的点云）
+    input_topic: "/pointcloud_fused"
+    
+    # 输出话题
+    output_obstacle_topic: "/obstacles"          # 椭圆障碍物数组话题
+    output_marker_topic: "/obstacles_markers"    # 可视化标记话题
+    
+    # 坐标系
+    frame_id: "base_link"
+    
+    # 点云降采样参数（体素滤波器叶子大小，单位：米）
+    # 值越小保留细节越多，但计算量越大
+    voxel_leaf_size: 0.1    # 改为0.1以保留更多细节，避免小障碍物被过滤
+    
+    # ROI（感兴趣区域）滤波参数（单位：米）
+    # X轴范围（前后方向）
+    x_filter_min: -1.0   # 允许后方障碍物（倒车时需要）
+    x_filter_max: 15.0   # 增大前方检测距离
+    
+    # Y轴范围（左右方向）
+    y_filter_min: -8.0   # 增大左侧范围
+    y_filter_max: 8.0    # 增大右侧范围
+    
+    # Z轴范围（上下方向）
+    z_filter_min: -2.0   # 放宽Z轴范围
+    z_filter_max: 3.0    # 允许更高的障碍物
+    
+    # 地面移除参数
+    remove_ground: true              # 是否移除地面点
+    ground_threshold: 0.15           # 减小阈值以更精确地识别地面（0.2->0.15）
+    
+    # 聚类参数
+    cluster_tolerance: 0.8           # 增大容差，更容易将稀疏点聚成簇（0.5->0.8）
+    min_cluster_size: 5              # 减小最小簇大小，检测更小的障碍物（10->5）
+    max_cluster_size: 25000          # 增大以支持大型障碍物
+    
+    # 障碍物过滤参数（单位：米）
+    min_obstacle_height: 0.05        # 减小最小高度，检测更矮的障碍物（0.1->0.05）
+    max_obstacle_height: 5.0         # 增大最大高度
+    min_obstacle_width: 0.02         # 减小最小宽度，检测更窄的障碍物（0.05->0.02）
+    max_obstacle_width: 10.0         # 增大最大宽度
+    
+    # 椭圆简化参数
+    ellipse_scale_factor: 1.2        # 椭圆放大系数（相对于PCA计算的2倍标准差）
+
