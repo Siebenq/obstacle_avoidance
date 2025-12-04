@@ -10,7 +10,7 @@ from launch.substitutions import LaunchConfiguration
 
 def generate_launch_description():
     # 获取包的共享目录
-    pkg_share = get_package_share_directory('unitree_obstacle_avoidance')
+    pkg_share = get_package_share_directory('obstacle_avoidance')
     
     # 获取默认参数文件路径
     default_params_file = os.path.join(pkg_share, 'config', 'fusion_params.yaml')

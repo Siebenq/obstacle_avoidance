@@ -10,8 +10,8 @@
 #include "visualization_msgs/msg/marker_array.hpp"
 #include "geometry_msgs/msg/point.hpp"
 
-#include "unitree_obstacle_avoidance/msg/ellipse_obstacle.hpp"
-#include "unitree_obstacle_avoidance/msg/ellipse_obstacle_array.hpp"
+#include "obstacle_avoidance/msg/ellipse_obstacle.hpp"
+#include "obstacle_avoidance/msg/ellipse_obstacle_array.hpp"
 
 #include "pcl_conversions/pcl_conversions.h"
 #include "pcl/point_cloud.h"
@@ -103,7 +103,7 @@ public:
       std::bind(&ObstacleDetectionNode::pointcloud_callback, this, std::placeholders::_1));
     
     // 创建发布者
-    obstacle_pub_ = this->create_publisher<unitree_obstacle_avoidance::msg::EllipseObstacleArray>(
+    obstacle_pub_ = this->create_publisher<obstacle_avoidance::msg::EllipseObstacleArray>(
       output_obstacle_topic_, 10);
     marker_pub_ = this->create_publisher<visualization_msgs::msg::MarkerArray>(
       output_marker_topic_, 10);
@@ -163,7 +163,7 @@ private:
       clusterExtraction(cloud_no_ground, clusters);
       
       // 5. 提取椭圆障碍物信息
-      std::vector<unitree_obstacle_avoidance::msg::EllipseObstacle> obstacles;
+      std::vector<obstacle_avoidance::msg::EllipseObstacle> obstacles;
       int id = 0;
       for (const auto& cluster : clusters) {
         auto obs = extractEllipseObstacle(cluster, id);
@@ -285,10 +285,10 @@ private:
   }
   
   // 5.提取椭圆障碍物信息（使用PCA计算椭圆参数）
-  unitree_obstacle_avoidance::msg::EllipseObstacle extractEllipseObstacle(
+  obstacle_avoidance::msg::EllipseObstacle extractEllipseObstacle(
     const pcl::PointCloud<pcl::PointXYZ>::Ptr& cluster, int id)
   {
-    unitree_obstacle_avoidance::msg::EllipseObstacle obs;
+    obstacle_avoidance::msg::EllipseObstacle obs;
     obs.id = id;
     obs.point_count = cluster->points.size();
     
@@ -355,11 +355,11 @@ private:
   }
   
   // 6.发布障碍物数组
-  void publishObstacles(const std::vector<unitree_obstacle_avoidance::msg::EllipseObstacle>& obstacles,
+  void publishObstacles(const std::vector<obstacle_avoidance::msg::EllipseObstacle>& obstacles,
                         const rclcpp::Time& timestamp,
                         const std::string& frame_id)
   {
-    unitree_obstacle_avoidance::msg::EllipseObstacleArray msg;
+    obstacle_avoidance::msg::EllipseObstacleArray msg;
     msg.header.stamp = timestamp;
     msg.header.frame_id = frame_id;  // 使用输入点云的坐标系
     msg.obstacles = obstacles;
@@ -370,7 +370,7 @@ private:
   // 发布空障碍物消息
   void publishEmptyObstacles(const rclcpp::Time& timestamp, const std::string& frame_id = "base_link")
   {
-    unitree_obstacle_avoidance::msg::EllipseObstacleArray msg;
+    obstacle_avoidance::msg::EllipseObstacleArray msg;
     msg.header.stamp = timestamp;
     msg.header.frame_id = frame_id;  // 使用输入点云的坐标系
     obstacle_pub_->publish(msg);
@@ -388,7 +388,7 @@ private:
   
   // 7.发布障碍物可视化标记（椭圆柱体）
   void publishObstacleMarkers(
-    const std::vector<unitree_obstacle_avoidance::msg::EllipseObstacle>& obstacles,
+    const std::vector<obstacle_avoidance::msg::EllipseObstacle>& obstacles,
     const rclcpp::Time& timestamp,
     const std::string& frame_id)
   {
@@ -526,7 +526,7 @@ private:
 
   // 订阅者和发布者
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subscription_;
-  rclcpp::Publisher<unitree_obstacle_avoidance::msg::EllipseObstacleArray>::SharedPtr obstacle_pub_;
+  rclcpp::Publisher<obstacle_avoidance::msg::EllipseObstacleArray>::SharedPtr obstacle_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_;
   
   // 参数

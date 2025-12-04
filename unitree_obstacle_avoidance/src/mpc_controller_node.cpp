@@ -9,7 +9,7 @@
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "nav_msgs/msg/path.hpp"
 #include "visualization_msgs/msg/marker_array.hpp"
-#include "unitree_obstacle_avoidance/msg/ellipse_obstacle_array.hpp"
+#include "obstacle_avoidance/msg/ellipse_obstacle_array.hpp"
 
 #include <casadi/casadi.hpp>
 #include <Eigen/Dense>
@@ -113,7 +113,7 @@ public:
       goal_topic, 10,
       std::bind(&MPCControllerNode::goal_pose_callback, this, std::placeholders::_1));
     
-    obstacle_sub_ = this->create_subscription<unitree_obstacle_avoidance::msg::EllipseObstacleArray>(
+    obstacle_sub_ = this->create_subscription<obstacle_avoidance::msg::EllipseObstacleArray>(
       obs_topic, 10,
       std::bind(&MPCControllerNode::obstacle_callback, this, std::placeholders::_1));
     
@@ -186,7 +186,7 @@ private:
   // }
   
   // 障碍物回调
-  void obstacle_callback(const unitree_obstacle_avoidance::msg::EllipseObstacleArray::SharedPtr msg)
+  void obstacle_callback(const obstacle_avoidance::msg::EllipseObstacleArray::SharedPtr msg)
   {
     std::lock_guard<std::mutex> lock(mutex_);
     obstacles_ = msg->obstacles;
@@ -516,7 +516,7 @@ opti.solver("sqpmethod", opts);
 
   // ROS相关
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr goal_pose_sub_;
-  rclcpp::Subscription<unitree_obstacle_avoidance::msg::EllipseObstacleArray>::SharedPtr obstacle_sub_;
+  rclcpp::Subscription<obstacle_avoidance::msg::EllipseObstacleArray>::SharedPtr obstacle_sub_;
   // rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr speed_sub_;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_;
@@ -526,7 +526,7 @@ opti.solver("sqpmethod", opts);
   geometry_msgs::msg::Pose goal_pose_;
   Eigen::VectorXd current_state_;
 
-  std::vector<unitree_obstacle_avoidance::msg::EllipseObstacle> obstacles_;
+  std::vector<obstacle_avoidance::msg::EllipseObstacle> obstacles_;
   
   bool has_goal_ = false;
   bool has_obstacles_ = false;

@@ -6,7 +6,7 @@ from ament_index_python.packages import get_package_share_directory
 def generate_launch_description():
 
     # 获取包路径
-    pkg_path = get_package_share_directory('unitree_robot')
+    pkg_path = get_package_share_directory('robot_simulation')
     model_path = os.path.join(pkg_path, 'urdf', 'ubot.urdf.xacro')
     rviz_config_path = os.path.join(pkg_path, 'config', 'display.rviz')
 

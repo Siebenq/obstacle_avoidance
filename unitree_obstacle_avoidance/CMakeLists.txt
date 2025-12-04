@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.8)
-project(unitree_obstacle_avoidance)
+project(obstacle_avoidance)
 
 # 设置C++标准
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -78,10 +78,19 @@ target_link_libraries(obstacle_detection_node
   ${PCL_LIBRARIES}
 )
 
-# 链接自定义消息
-rosidl_target_interfaces(obstacle_detection_node
-  ${PROJECT_NAME} "rosidl_typesupport_cpp"
-)
+# # 链接自定义消息
+# rosidl_target_interfaces(obstacle_detection_node
+#   ${PROJECT_NAME} "rosidl_typesupport_cpp"
+# )
+
+# 获取 C++ 类型支持 target（代替 rosidl_target_interfaces）
+rosidl_get_typesupport_target(cpp_typesupport_target
+  ${PROJECT_NAME}
+  "rosidl_typesupport_cpp")
+
+# 把 typesupport 链接到可执行文件上
+target_link_libraries(obstacle_detection_node
+  ${cpp_typesupport_target})
 
 # # 创建轨迹生成可执行文件
 # add_executable(trajectory_generator_node src/trajectory_generator_node.cpp)
@@ -121,10 +130,19 @@ ament_target_dependencies(mpc_controller_node
   visualization_msgs
 )
 
-# 链接自定义消息
-rosidl_target_interfaces(mpc_controller_node
-  ${PROJECT_NAME} "rosidl_typesupport_cpp"
-)
+# # 链接自定义消息
+# rosidl_target_interfaces(mpc_controller_node
+#   ${PROJECT_NAME} "rosidl_typesupport_cpp"
+# )
+
+# 获取 C++ 类型支持 target（代替 rosidl_target_interfaces）
+rosidl_get_typesupport_target(cpp_typesupport_target
+  ${PROJECT_NAME}
+  "rosidl_typesupport_cpp")
+
+# 把 typesupport 链接到可执行文件上
+target_link_libraries(mpc_controller_node
+  ${cpp_typesupport_target})
 
 # 包含CasADi头文件
 target_include_directories(mpc_controller_node PRIVATE ${CASADI_INCLUDE_DIRS})
@@ -150,20 +168,20 @@ install(DIRECTORY
   DESTINATION share/${PROJECT_NAME}
 )
 
-# 安装脚本
-install(PROGRAMS
-  scripts/test_velocity_publisher.py
-  scripts/calibrate_transform.py
-  scripts/diagnose_transform.py
-  scripts/test_obstacle_params.py
-  scripts/diagnose_frame_alignment.py
-  DESTINATION lib/${PROJECT_NAME}
-)
+# # 安装脚本
+# install(PROGRAMS
+#   scripts/test_velocity_publisher.py
+#   scripts/calibrate_transform.py
+#   scripts/diagnose_transform.py
+#   scripts/test_obstacle_params.py
+#   scripts/diagnose_frame_alignment.py
+#   DESTINATION lib/${PROJECT_NAME}
+# )
 
-install(FILES
-  scripts/README_TEST.md
-  DESTINATION share/${PROJECT_NAME}/scripts
-)
+# install(FILES
+#   scripts/README_TEST.md
+#   DESTINATION share/${PROJECT_NAME}/scripts
+# )
 
 # 测试
 if(BUILD_TESTING)

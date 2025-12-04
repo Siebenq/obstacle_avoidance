@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>unitree_obstacle_avoidance</name>
+  <name>obstacle_avoidance</name>
   <version>1.0.0</version>
   <description>ROS2节点用于融合两个点云话题、障碍物检测、轨迹生成和MPC控制</description>
   <maintainer email="user@todo.todo">User</maintainer>

@@ -5,7 +5,7 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 
 def generate_launch_description():
     
-    urdf_path=get_package_share_directory('unitree_robot')
+    urdf_path=get_package_share_directory('robot_simulation')
     model_path=urdf_path+'/urdf/ubot.urdf.xacro'
     # model2_path=urdf_path+'/urdf2/ubot2.urdf.xacro'
     world_path=urdf_path+'/world/obstacle.world'
