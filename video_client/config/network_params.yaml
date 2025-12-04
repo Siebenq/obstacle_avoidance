@@ -1,0 +1,23 @@
+network_receiver_node:
+  ros__parameters:
+    # 服务器IP地址
+    server_ip: "192.168.1.100"
+    
+    # 视频流端口
+    video_port: 5000
+    
+    # 点云流端口
+    pointcloud_port: 5001
+    
+    # 点云发布话题
+    pointcloud_topic: "/camera_person"
+    
+    # 视频窗口名称
+    video_window_name: "Network Video Stream"
+    
+    # 是否显示视频
+    display_video: true
+    
+    # 网络缓冲区大小（字节）
+    buffer_size: 65536
+
