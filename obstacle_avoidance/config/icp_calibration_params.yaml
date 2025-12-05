@@ -1,0 +1,27 @@
+icp_calibration_node:
+  ros__parameters:
+    # 输入话题
+    topic1: "/camera_dog/points"
+    topic2: "/camera_person/points"
+    
+    # 输出话题
+    output_topic: "/icp_transform"
+    
+    # ICP算法参数
+    max_correspondence_distance: 0.3    # 最大对应点距离（米）
+    max_iterations: 50                  # 最大迭代次数
+    transformation_epsilon: 1e-9      # 变换收敛阈值
+    euclidean_fitness_epsilon: 1e-6      # 欧几里得适配度阈值
+    
+    # 点云预处理参数
+    use_voxel_filter: true              # 是否使用体素滤波
+    voxel_leaf_size: 0.01               # 体素叶子大小（米）
+    use_outlier_removal: true           # 是否去除离群点
+    outlier_mean_k: 50                  # 离群点检测邻居数
+    outlier_stddev_mul: 1.0             # 离群点标准差倍数
+    
+    # 标定触发参数
+    auto_calibrate: true                # 是否自动标定
+    calibration_interval: 60.0           # 自动标定间隔（秒）
+    min_points_required: 100            # 最少点数要求
+

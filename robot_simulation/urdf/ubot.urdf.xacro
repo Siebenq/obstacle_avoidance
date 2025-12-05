@@ -3,25 +3,23 @@
 
 
      <!-- 执行器组件 -->
-    <xacro:include filename="$(find unitree_robot)/urdf/actuator/wheel.urdf.xacro" />
-    <xacro:include filename="$(find unitree_robot)/urdf/actuator/caster.urdf.xacro" />
-    <xacro:include filename="$(find unitree_robot)/urdf/actuator/caster_general.urdf.xacro" />
-    <xacro:include filename="$(find unitree_robot)/urdf/actuator/connecting_rod.urdf.xacro" />
-    <xacro:include filename="$(find unitree_robot)/urdf/actuator/cylinder_base.urdf.xacro" />
+    <xacro:include filename="$(find robot_simulation)/urdf/actuator/wheel.urdf.xacro" />
+    <xacro:include filename="$(find robot_simulation)/urdf/actuator/caster.urdf.xacro" />
+    <xacro:include filename="$(find robot_simulation)/urdf/actuator/caster_general.urdf.xacro" />
+    <xacro:include filename="$(find robot_simulation)/urdf/actuator/connecting_rod.urdf.xacro" />
+    <xacro:include filename="$(find robot_simulation)/urdf/actuator/cylinder_base.urdf.xacro" />
     <!-- Gazebo 插件 -->
-    <xacro:include filename="$(find unitree_robot)/urdf/plugins/gazebo_control_plugin.xacro" />
+    <xacro:include filename="$(find robot_simulation)/urdf/plugins/gazebo_control_plugin.xacro" />
     <xacro:gazebo_control_plugin />
-    <xacro:include filename="$(find unitree_robot)/urdf/plugins/gazebo_sensor_plugin.xacro" />
+    <xacro:include filename="$(find robot_simulation)/urdf/plugins/gazebo_sensor_plugin.xacro" />
     <xacro:gazebo_sensor_plugin />
     <!-- 传感器组件 -->
-    <xacro:include filename="$(find unitree_robot)/urdf/sensor/imu.urdf.xacro" />
-    <xacro:include filename="$(find unitree_robot)/urdf/sensor/camera.urdf.xacro" />
-    <xacro:include filename="$(find unitree_robot)/urdf/sensor/depth_camera.urdf.xacro" />
-
-
+    <xacro:include filename="$(find robot_simulation)/urdf/sensor/imu.urdf.xacro" />
+    <xacro:include filename="$(find robot_simulation)/urdf/sensor/camera.urdf.xacro" />
+    <xacro:include filename="$(find robot_simulation)/urdf/sensor/depth_camera.urdf.xacro" />
 
      <!-- 主体 -->
-    <xacro:include filename="$(find unitree_robot)/urdf/base.urdf.xacro" />
+    <xacro:include filename="$(find robot_simulation)/urdf/base.urdf.xacro" />
     <xacro:base_xacro length="0.12" radius="0.1" />
 
     <!-- 传感器 -->

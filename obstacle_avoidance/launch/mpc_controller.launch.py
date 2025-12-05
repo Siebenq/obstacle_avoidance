@@ -24,7 +24,7 @@ def generate_launch_description():
     
     # 创建MPC控制器节点
     mpc_controller_node = Node(
-        package='unitree_obstacle_avoidance',
+        package='obstacle_avoidance',
         executable='mpc_controller_node',
         name='mpc_controller_node',
         output='screen',

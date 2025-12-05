@@ -24,8 +24,7 @@ find_package(nav_msgs REQUIRED)
 find_package(PCL REQUIRED COMPONENTS common io filters segmentation)
 find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 
-# 消息生成
-find_package(rosidl_default_generators REQUIRED)
+
 
 # 包含目录
 include_directories(
@@ -37,16 +36,30 @@ include_directories(
 link_directories(${PCL_LIBRARY_DIRS})
 add_definitions(${PCL_DEFINITIONS})
 
+
+# 消息生成
+find_package(rosidl_default_generators REQUIRED)
+
 # 生成自定义消息
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/EllipseObstacle.msg"
   "msg/EllipseObstacleArray.msg"
+  "msg/TransformMatrix.msg"
   DEPENDENCIES
   std_msgs
   geometry_msgs
 )
 
-# 创建可执行文件
+# 链接自定义消息
+rosidl_get_typesupport_target(cpp_typesupport_target
+  ${PROJECT_NAME}
+  "rosidl_typesupport_cpp")
+
+
+
+
+
+# 创建点云融合可执行文件
 add_executable(pointcloud_fusion_node src/pointcloud_fusion_node.cpp)
 
 ament_target_dependencies(pointcloud_fusion_node
@@ -61,7 +74,12 @@ ament_target_dependencies(pointcloud_fusion_node
 
 target_link_libraries(pointcloud_fusion_node
   ${PCL_LIBRARIES}
+  ${cpp_typesupport_target}
 )
+
+
+
+
 
 # 创建障碍物检测可执行文件
 add_executable(obstacle_detection_node src/obstacle_detection_node.cpp)
@@ -74,38 +92,35 @@ ament_target_dependencies(obstacle_detection_node
   visualization_msgs
 )
 
+# 链接到可执行文件上
 target_link_libraries(obstacle_detection_node
   ${PCL_LIBRARIES}
+  ${cpp_typesupport_target}
 )
 
-# # 链接自定义消息
-# rosidl_target_interfaces(obstacle_detection_node
-#   ${PROJECT_NAME} "rosidl_typesupport_cpp"
-# )
 
-# 获取 C++ 类型支持 target（代替 rosidl_target_interfaces）
-rosidl_get_typesupport_target(cpp_typesupport_target
-  ${PROJECT_NAME}
-  "rosidl_typesupport_cpp")
 
-# 把 typesupport 链接到可执行文件上
-target_link_libraries(obstacle_detection_node
-  ${cpp_typesupport_target})
 
-# # 创建轨迹生成可执行文件
-# add_executable(trajectory_generator_node src/trajectory_generator_node.cpp)
 
-# ament_target_dependencies(trajectory_generator_node
-#   rclcpp
-#   geometry_msgs
-#   nav_msgs
-#   visualization_msgs
-#   tf2_eigen
-# )
 
-# target_link_libraries(trajectory_generator_node
-#   Eigen3::Eigen
-# )
+# 创建ICP标定可执行文件
+add_executable(icp_calibration_node src/icp_calibration_node.cpp)
+
+ament_target_dependencies(icp_calibration_node
+  rclcpp
+  sensor_msgs
+  pcl_conversions
+)
+
+target_link_libraries(icp_calibration_node
+  ${PCL_LIBRARIES}
+  ${cpp_typesupport_target}
+)
+
+
+
+
+
 
 # 查找CasADi
 find_package(casadi QUIET)
@@ -130,19 +145,6 @@ ament_target_dependencies(mpc_controller_node
   visualization_msgs
 )
 
-# # 链接自定义消息
-# rosidl_target_interfaces(mpc_controller_node
-#   ${PROJECT_NAME} "rosidl_typesupport_cpp"
-# )
-
-# 获取 C++ 类型支持 target（代替 rosidl_target_interfaces）
-rosidl_get_typesupport_target(cpp_typesupport_target
-  ${PROJECT_NAME}
-  "rosidl_typesupport_cpp")
-
-# 把 typesupport 链接到可执行文件上
-target_link_libraries(mpc_controller_node
-  ${cpp_typesupport_target})
 
 # 包含CasADi头文件
 target_include_directories(mpc_controller_node PRIVATE ${CASADI_INCLUDE_DIRS})
@@ -150,6 +152,7 @@ target_include_directories(mpc_controller_node PRIVATE ${CASADI_INCLUDE_DIRS})
 # 链接CasADi库和Eigen3
 target_link_libraries(mpc_controller_node 
   ${CASADI_LIBRARIES}
+  ${cpp_typesupport_target}
   Eigen3::Eigen
 )
 
@@ -157,7 +160,7 @@ target_link_libraries(mpc_controller_node
 install(TARGETS
   pointcloud_fusion_node
   obstacle_detection_node
-  # trajectory_generator_node
+  icp_calibration_node
   mpc_controller_node
   DESTINATION lib/${PROJECT_NAME}
 )

@@ -24,7 +24,7 @@ def generate_launch_description():
     
     # 创建障碍物检测节点
     obstacle_detection_node = Node(
-        package='unitree_obstacle_avoidance',
+        package='obstacle_avoidance',
         executable='obstacle_detection_node',
         name='obstacle_detection_node',
         output='screen',

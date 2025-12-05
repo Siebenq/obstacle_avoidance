@@ -24,7 +24,7 @@ def generate_launch_description():
     
     # 创建节点
     pointcloud_fusion_node = Node(
-        package='unitree_obstacle_avoidance',
+        package='obstacle_avoidance',
         executable='pointcloud_fusion_node',
         name='pointcloud_fusion_node',
         output='screen',

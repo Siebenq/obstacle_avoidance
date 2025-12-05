@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
-   <xacro:include filename="$(find unitree_robot)/urdf/common_inertia.xacro" />
+   <xacro:include filename="$(find robot_simulation)/urdf/common_inertia.xacro" />
     <xacro:macro name="caster_general_xacro" params="caster_name parent_link xyz">
         <!-- 通用万向轮，可以附加到任何父链接 -->
         <link name="${caster_name}_caster_link">
