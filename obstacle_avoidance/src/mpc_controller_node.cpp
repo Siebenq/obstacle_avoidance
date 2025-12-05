@@ -180,10 +180,6 @@ private:
                 goal_pose_.position.x, goal_pose_.position.y);
   }
 
-  // void speed_callback(const nav_msgs::msg::Odometry::SharedPtr msg){
-  //   std::lock_guard<std::mutex> lock(mutex_);
-  //   current_state_[3]=msg->
-  // }
   
   // 障碍物回调
   void obstacle_callback(const obstacle_avoidance::msg::EllipseObstacleArray::SharedPtr msg)
@@ -250,6 +246,7 @@ private:
       
       // 跟踪代价 + 障碍物代价
       for (int k = 0; k < N_; ++k) {
+
         // 获取参考点
         auto ref = getReferenceState();
         
@@ -275,6 +272,8 @@ private:
         }
       }
 
+
+      // // 设置终端代价（需要把状态追踪代价去掉）
       // // 获取参考点
       // auto ref = getReferenceState();
 
@@ -317,34 +316,23 @@ private:
       opti.minimize(cost);
       
       // 求解器选项
-// QP solver options
-// 1. 设置 QP 子求解器选项 (静默)
-Dict qp_opts;
-qp_opts["print_iter"] = false;
-qp_opts["print_header"] = false;
+      // QP solver options
+      // 1. 设置 QP 子求解器选项 (静默)
+      Dict qp_opts;
+      qp_opts["print_iter"] = false;
+      qp_opts["print_header"] = false;
 
-// 2. 设置 SQP 主求解器选项 (静默)
-Dict opts;
-opts["qpsol"] = "qrqp";              // 使用 qrqp
-opts["qpsol_options"] = qp_opts;     // 传入 QP 选项
-opts["print_time"] = false;          // 不打印时间
-opts["print_header"] = false;        // 不打印头部
-opts["print_iteration"] = false;     // 不打印迭代过程
-opts["print_status"] = false;     // 不打印 "Convergence achieved"
+      // 2. 设置 SQP 主求解器选项 (静默)
+      Dict opts;
+      opts["qpsol"] = "qrqp";              // 使用 qrqp
+      opts["qpsol_options"] = qp_opts;     // 传入 QP 选项
+      opts["print_time"] = false;          // 不打印时间
+      opts["print_header"] = false;        // 不打印头部
+      opts["print_iteration"] = false;     // 不打印迭代过程
+      opts["print_status"] = false;     // 不打印 "Convergence achieved"
 
-// 初始化 solver
-opti.solver("sqpmethod", opts);
-
-      // Dict opts;
-      // opts["verbose"] = false;
-      // opts["print_time"] = 0;
-      // opts["max_iter"] = 50;
-      // opts["tol_du"] = 1e-4;
-      // opts["tol_pr"] = 1e-4;
-      // opts["qpsol"] = "qrqp";
-      
-      // // opti.solver("ipopt", opts);
-      // opti.solver("sqpmethod", opts);
+      // 初始化 solver
+      opti.solver("sqpmethod", opts);
       
       // 求解
       OptiSol sol = opti.solve();
@@ -353,14 +341,6 @@ opti.solver("sqpmethod", opts);
       DM u_opt = sol.value(U);
       Eigen::Vector2d control;
       control << double(u_opt(0, 0)), double(u_opt(1, 0));
-      
-      // // 更新状态（简单的积分）
-      // current_state_[3] += control[0] * dt_;  // v
-      // current_state_[4] += control[1] * dt_;  // omega
-      
-      // // 限制速度
-      // current_state_[3] = std::max(-max_velocity_, std::min(max_velocity_, current_state_[3]));
-      // current_state_[4] = std::max(-max_angular_vel_, std::min(max_angular_vel_, current_state_[4]));
       
       return {true, control};
       

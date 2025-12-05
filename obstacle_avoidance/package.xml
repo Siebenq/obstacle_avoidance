@@ -3,7 +3,7 @@
 <package format="3">
   <name>obstacle_avoidance</name>
   <version>1.0.0</version>
-  <description>ROS2节点用于融合两个点云话题、障碍物检测、轨迹生成和MPC控制</description>
+  <description>ROS2节点用于融合两个点云话题、障碍物检测和MPC控制</description>
   <maintainer email="user@todo.todo">User</maintainer>
   <license>Apache-2.0</license>
 
