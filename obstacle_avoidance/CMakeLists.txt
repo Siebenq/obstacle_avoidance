@@ -156,12 +156,32 @@ target_link_libraries(mpc_controller_node
   Eigen3::Eigen
 )
 
+
+
+
+# 创建APF控制器可执行文件
+add_executable(apf_controller_node src/apf_controller_node.cpp)
+
+ament_target_dependencies(apf_controller_node
+  rclcpp
+  geometry_msgs
+)
+
+target_link_libraries(apf_controller_node
+  ${cpp_typesupport_target}
+  Eigen3::Eigen
+)
+
+
+
+
 # 安装
 install(TARGETS
   pointcloud_fusion_node
   obstacle_detection_node
   icp_calibration_node
   mpc_controller_node
+  apf_controller_node
   DESTINATION lib/${PROJECT_NAME}
 )
 

@@ -12,6 +12,7 @@ ros2 launch obstacle_avoidance obstacle_detection.launch.py
 
 4.start controller node
 ros2 launch obstacle_avoidance mpc_controller.launch.py
+ros2 launch obstacle_avoidance mpc_controller.launch.py(better performance)
 
 5.set test goal position
   ros2 topic pub /goal_pose geometry_msgs/msg/PoseStamped "
