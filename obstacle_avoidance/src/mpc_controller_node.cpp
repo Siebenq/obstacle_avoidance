@@ -188,17 +188,15 @@ private:
     obstacles_ = msg->obstacles;
     has_obstacles_ = true;
     
-    RCLCPP_DEBUG(this->get_logger(), "接收到障碍物数据，数量: %zu", obstacles_.size());
+    RCLCPP_INFO(this->get_logger(), "接收到障碍物数据，数量: %zu", obstacles_.size());
     
     // 打印障碍物信息（调试用）
     if (!obstacles_.empty()) {
-      RCLCPP_DEBUG(this->get_logger(), "障碍物详情:");
       for (size_t i = 0; i < obstacles_.size() && i < 5; ++i) {
         const auto& obs = obstacles_[i];
-        RCLCPP_DEBUG(this->get_logger(), 
-                     "  [%zu] 位置:(%.2f, %.2f), 长轴:%.2f, 短轴:%.2f, 距离:%.2f",
-                     i, obs.center.x, obs.center.y, 
-                     obs.semi_major_axis, obs.semi_minor_axis, obs.distance);
+        RCLCPP_INFO(this->get_logger(), 
+        "[%zu] 位置:(%.2f, %.2f)",
+        i, obs.center.x, obs.center.y);
       }
     }
   }

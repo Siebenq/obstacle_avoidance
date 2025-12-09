@@ -6,6 +6,8 @@
 #include <pcl/registration/icp.h>
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/filters/statistical_outlier_removal.h>
+#include <pcl/filters/passthrough.h>
+#include <pcl/filters/crop_box.h>
 #include <Eigen/Dense>
 
 #include "obstacle_avoidance/msg/transform_matrix.hpp"
@@ -36,15 +38,31 @@ public:
     
     // 点云预处理参数
     this->declare_parameter<bool>("use_voxel_filter", true);
-    this->declare_parameter<double>("voxel_leaf_size", 0.01);
-    this->declare_parameter<bool>("use_outlier_removal", true);
+    this->declare_parameter<double>("voxel_leaf_size", 0.05);
+    this->declare_parameter<bool>("use_outlier_removal", false);  // 关闭以提速
     this->declare_parameter<int>("outlier_mean_k", 50);
     this->declare_parameter<double>("outlier_stddev_mul", 1.0);
+    
+    // 点云裁剪参数（只处理重叠区域，大幅提速）
+    this->declare_parameter<bool>("use_crop", true);
+    this->declare_parameter<double>("crop_x_min", -5.0);
+    this->declare_parameter<double>("crop_x_max", 5.0);
+    this->declare_parameter<double>("crop_y_min", -5.0);
+    this->declare_parameter<double>("crop_y_max", 5.0);
+    this->declare_parameter<double>("crop_z_min", 0.0);
+    this->declare_parameter<double>("crop_z_max", 3.0);
     
     // 标定触发参数
     this->declare_parameter<bool>("auto_calibrate", true);
     this->declare_parameter<double>("calibration_interval", 5.0);  // 秒
     this->declare_parameter<int>("min_points_required", 100);
+    
+    // 初始变换估计参数（用于提高ICP收敛）
+    this->declare_parameter<bool>("use_initial_guess", true);
+    this->declare_parameter<double>("initial_x", -1.131);  // 左后方45°，距离1.6m的水平分量
+    this->declare_parameter<double>("initial_y", -1.131);  // 左后方45°，距离1.6m的水平分量
+    this->declare_parameter<double>("initial_z", 1.6);     // 高度
+    this->declare_parameter<double>("initial_yaw", 0.7854); // 45° = π/4 rad
     
     // 获取参数
     topic1_ = this->get_parameter("topic1").as_string();
@@ -62,9 +80,43 @@ public:
     outlier_mean_k_ = this->get_parameter("outlier_mean_k").as_int();
     outlier_stddev_mul_ = this->get_parameter("outlier_stddev_mul").as_double();
     
+    use_crop_ = this->get_parameter("use_crop").as_bool();
+    crop_x_min_ = this->get_parameter("crop_x_min").as_double();
+    crop_x_max_ = this->get_parameter("crop_x_max").as_double();
+    crop_y_min_ = this->get_parameter("crop_y_min").as_double();
+    crop_y_max_ = this->get_parameter("crop_y_max").as_double();
+    crop_z_min_ = this->get_parameter("crop_z_min").as_double();
+    crop_z_max_ = this->get_parameter("crop_z_max").as_double();
+    
     auto_calibrate_ = this->get_parameter("auto_calibrate").as_bool();
     calibration_interval_ = this->get_parameter("calibration_interval").as_double();
     min_points_required_ = this->get_parameter("min_points_required").as_int();
+    
+    use_initial_guess_ = this->get_parameter("use_initial_guess").as_bool();
+    initial_x_ = this->get_parameter("initial_x").as_double();
+    initial_y_ = this->get_parameter("initial_y").as_double();
+    initial_z_ = this->get_parameter("initial_z").as_double();
+    initial_yaw_ = this->get_parameter("initial_yaw").as_double();
+    
+    // 计算初始变换矩阵
+    if (use_initial_guess_) {
+      initial_transform_ = Eigen::Matrix4f::Identity();
+      // 旋转矩阵 (绕Z轴旋转yaw角)
+      float cos_yaw = std::cos(initial_yaw_);
+      float sin_yaw = std::sin(initial_yaw_);
+      initial_transform_(0, 0) = cos_yaw;
+      initial_transform_(0, 1) = -sin_yaw;
+      initial_transform_(1, 0) = sin_yaw;
+      initial_transform_(1, 1) = cos_yaw;
+      // 平移
+      initial_transform_(0, 3) = initial_x_;
+      initial_transform_(1, 3) = initial_y_;
+      initial_transform_(2, 3) = initial_z_;
+      
+      RCLCPP_INFO(this->get_logger(), "使用初始变换估计:");
+      RCLCPP_INFO(this->get_logger(), "  平移: (%.3f, %.3f, %.3f)", initial_x_, initial_y_, initial_z_);
+      RCLCPP_INFO(this->get_logger(), "  偏航角: %.2f° (%.4f rad)", initial_yaw_ * 180.0 / M_PI, initial_yaw_);
+    }
     
 
 
@@ -168,30 +220,69 @@ private:
     }
     
     // 预处理点云
+    auto preprocess_start = std::chrono::high_resolution_clock::now();
     pcl::PointCloud<pcl::PointXYZ>::Ptr cloud1_processed = preprocessPointCloud(cloud1);
     pcl::PointCloud<pcl::PointXYZ>::Ptr cloud2_processed = preprocessPointCloud(cloud2);
+    auto preprocess_end = std::chrono::high_resolution_clock::now();
+    double preprocess_ms = std::chrono::duration<double, std::milli>(preprocess_end - preprocess_start).count();
     
-    RCLCPP_INFO(this->get_logger(), "  预处理后: cloud1=%zu, cloud2=%zu", 
-                cloud1_processed->points.size(), cloud2_processed->points.size());
+    RCLCPP_INFO(this->get_logger(), "  预处理后: cloud1=%zu, cloud2=%zu (用时: %.1fms)", 
+                cloud1_processed->points.size(), cloud2_processed->points.size(), preprocess_ms);
     
-    // 配置ICP
+    // 检查预处理后点数
+    if (cloud1_processed->points.size() < 50 || cloud2_processed->points.size() < 50) {
+      RCLCPP_ERROR(this->get_logger(), "❌ 预处理后点数过少，无法进行ICP");
+      RCLCPP_ERROR(this->get_logger(), "   cloud1: %zu 点, cloud2: %zu 点（需要至少50点）", 
+                   cloud1_processed->points.size(), cloud2_processed->points.size());
+      RCLCPP_ERROR(this->get_logger(), "   建议: 扩大裁剪范围或减小体素大小");
+      return;
+    }
+    
+    // 警告点数过少
+    if (cloud1_processed->points.size() < 500 || cloud2_processed->points.size() < 500) {
+      RCLCPP_WARN(this->get_logger(), "⚠️  预处理后点数较少，可能影响精度");
+      RCLCPP_WARN(this->get_logger(), "   建议: 扩大裁剪范围或减小体素大小（当前: %.3f）", voxel_leaf_size_);
+    }
+    
+    // 配置ICP - 优化参数以平衡速度和精度
     pcl::IterativeClosestPoint<pcl::PointXYZ, pcl::PointXYZ> icp;
     icp.setInputSource(cloud2_processed);  // cloud2作为源（要变换的点云）
     icp.setInputTarget(cloud1_processed);  // cloud1作为目标（参考点云）
     
-    icp.setMaxCorrespondenceDistance(max_correspondence_distance_);
-    icp.setMaximumIterations(max_iterations_);
+    RCLCPP_INFO(this->get_logger(), "  ICP配置: cloud2 -> cloud1 的变换");
+    
+    // 根据点云数量动态调整参数
+    double adaptive_distance = max_correspondence_distance_;
+    int adaptive_iterations = max_iterations_;
+    
+    // 点数少时可以用更多迭代，点数多时减少迭代
+    if (cloud1_processed->points.size() > 5000 || cloud2_processed->points.size() > 5000) {
+      adaptive_iterations = std::min(30, max_iterations_);  // 点多时减少迭代
+      RCLCPP_INFO(this->get_logger(), "  点云较密集，减少迭代次数至 %d", adaptive_iterations);
+    }
+    
+    icp.setMaxCorrespondenceDistance(adaptive_distance);
+    icp.setMaximumIterations(adaptive_iterations);
     icp.setTransformationEpsilon(transformation_epsilon_);
     icp.setEuclideanFitnessEpsilon(euclidean_fitness_epsilon_);
     
     // 执行ICP
     pcl::PointCloud<pcl::PointXYZ>::Ptr aligned_cloud(new pcl::PointCloud<pcl::PointXYZ>);
     
-    auto start_time = std::chrono::high_resolution_clock::now();
-    icp.align(*aligned_cloud);
-    auto end_time = std::chrono::high_resolution_clock::now();
+    auto icp_start = std::chrono::high_resolution_clock::now();
     
-    double elapsed_ms = std::chrono::duration<double, std::milli>(end_time - start_time).count();
+    // 使用初始变换估计
+    if (use_initial_guess_) {
+      RCLCPP_INFO(this->get_logger(), "  使用初始变换估计进行ICP配准");
+      icp.align(*aligned_cloud, initial_transform_);
+    } else {
+      icp.align(*aligned_cloud);
+    }
+    
+    auto icp_end = std::chrono::high_resolution_clock::now();
+    
+    double icp_ms = std::chrono::duration<double, std::milli>(icp_end - icp_start).count();
+    double total_ms = preprocess_ms + icp_ms;
     
     // 获取结果
     bool converged = icp.hasConverged();
@@ -199,13 +290,36 @@ private:
     Eigen::Matrix4f transformation = icp.getFinalTransformation();
     
     RCLCPP_INFO(this->get_logger(), "ICP标定完成:");
+    RCLCPP_INFO(this->get_logger(), "  收敛状态: %s", converged ? "✓ 已收敛" : "✗ 未收敛");
+    RCLCPP_INFO(this->get_logger(), "  适配度分数: %.6f %s", fitness_score, 
+                fitness_score < 0.001 ? "⭐优秀" : fitness_score < 0.01 ? "✓良好" : "⚠需改进");
+    RCLCPP_INFO(this->get_logger(), "  用时: 预处理 %.1fms + ICP %.1fms = 总计 %.1fms", 
+                preprocess_ms, icp_ms, total_ms);
 
     if (!converged) {
-      RCLCPP_WARN(this->get_logger(), "ICP未收敛，结果可能不准确");
+      RCLCPP_WARN(this->get_logger(), "❌ ICP未收敛，结果可能不准确");
+      RCLCPP_WARN(this->get_logger(), "   可能原因:");
+      RCLCPP_WARN(this->get_logger(), "   1. 两个点云重叠度不够");
+      RCLCPP_WARN(this->get_logger(), "   2. max_correspondence_distance 太小（当前: %.2f）", max_correspondence_distance_);
+      RCLCPP_WARN(this->get_logger(), "   3. 预处理后点数太少（cloud1: %zu, cloud2: %zu）", 
+                  cloud1_processed->points.size(), cloud2_processed->points.size());
+      RCLCPP_WARN(this->get_logger(), "   建议: 增大 max_correspondence_distance 到 1.0-2.0");
+    }
+    
+    // 警告fitness_score过大
+    if (fitness_score > 0.1) {
+      RCLCPP_WARN(this->get_logger(), "⚠️  适配度分数过大（%.3f），标定质量差", fitness_score);
+      if (fitness_score > 1.0) {
+        RCLCPP_ERROR(this->get_logger(), "❌ 适配度分数 > 1.0，标定可能完全失败");
+        RCLCPP_ERROR(this->get_logger(), "   请检查:");
+        RCLCPP_ERROR(this->get_logger(), "   1. 两个点云是否真的有重叠？（在RViz中验证）");
+        RCLCPP_ERROR(this->get_logger(), "   2. 初始估计是否正确？");
+        RCLCPP_ERROR(this->get_logger(), "   3. 裁剪范围是否太小？");
+      }
     }
     
     // 打印变换矩阵
-    RCLCPP_INFO(this->get_logger(), "  变换矩阵 (cloud2 -> cloud1):");
+    RCLCPP_INFO(this->get_logger(), "  🔄 变换矩阵 (cloud2 -> cloud1):");
     for (int i = 0; i < 4; ++i) {
       RCLCPP_INFO(this->get_logger(), "    [%7.4f %7.4f %7.4f %7.4f]",
                   transformation(i, 0), transformation(i, 1),
@@ -225,22 +339,39 @@ private:
     // 计算RMSE
     double rmse = std::sqrt(fitness_score);
     
-    // 发布结果
+    // 发布正变换
     publishTransform(transformation, fitness_score, rmse, converged,
-                     cloud1_msg_->header.frame_id, cloud2_msg_->header.frame_id,
-                     cloud1->points.size(), cloud2->points.size());
+                     cloud2_msg_->header.frame_id, cloud1_msg_->header.frame_id,
+                     cloud2->points.size(), cloud1->points.size());
+    
   }
   
   /**
-   * @brief 预处理点云（降采样和离群点去除）
+   * @brief 预处理点云（裁剪、降采样和离群点去除）
    */
   pcl::PointCloud<pcl::PointXYZ>::Ptr preprocessPointCloud(
     const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud)
   {
     pcl::PointCloud<pcl::PointXYZ>::Ptr processed_cloud = cloud;
     
-    // 体素滤波降采样
-    if (use_voxel_filter_) {
+    // 1. 裁剪点云（只保留感兴趣区域，大幅提速）
+    if (use_crop_) {
+      pcl::PointCloud<pcl::PointXYZ>::Ptr cropped(new pcl::PointCloud<pcl::PointXYZ>);
+      pcl::CropBox<pcl::PointXYZ> crop_box;
+      crop_box.setInputCloud(processed_cloud);
+      crop_box.setMin(Eigen::Vector4f(crop_x_min_, crop_y_min_, crop_z_min_, 1.0));
+      crop_box.setMax(Eigen::Vector4f(crop_x_max_, crop_y_max_, crop_z_max_, 1.0));
+      crop_box.filter(*cropped);
+      processed_cloud = cropped;
+      
+      if (processed_cloud->points.size() == 0) {
+        RCLCPP_WARN(this->get_logger(), "裁剪后点云为空，使用原始点云");
+        processed_cloud = cloud;
+      }
+    }
+    
+    // 2. 体素滤波降采样（减少计算量）
+    if (use_voxel_filter_ && processed_cloud->points.size() > 1000) {
       pcl::PointCloud<pcl::PointXYZ>::Ptr voxel_filtered(new pcl::PointCloud<pcl::PointXYZ>);
       pcl::VoxelGrid<pcl::PointXYZ> voxel_grid;
       voxel_grid.setInputCloud(processed_cloud);
@@ -249,8 +380,8 @@ private:
       processed_cloud = voxel_filtered;
     }
     
-    // 统计离群点去除
-    if (use_outlier_removal_) {
+    // 3. 统计离群点去除（可选，较慢）
+    if (use_outlier_removal_ && processed_cloud->points.size() > 500) {
       pcl::PointCloud<pcl::PointXYZ>::Ptr outlier_removed(new pcl::PointCloud<pcl::PointXYZ>);
       pcl::StatisticalOutlierRemoval<pcl::PointXYZ> sor;
       sor.setInputCloud(processed_cloud);
@@ -277,16 +408,11 @@ private:
     msg.header.stamp = this->now();
     msg.header.frame_id = "icp_calibration";
     
-    // // 转换矩阵为行优先数组
-    // for (int i = 0; i < 4; ++i) {
-    //   for (int j = 0; j < 4; ++j) {
-    //     msg.matrix[i * 4 + j] = transform(i, j);
-    //   }
-    // }
-    for(int i=0;i<16;i++){
-      msg.matrix[i]=transform(i);
-    }
-    
+    // 转换矩阵为行优先数组
+    for (int i = 0; i < 16; ++i) {
+      msg.matrix[i] = transform(i);
+   }
+
     // 设置质量指标
     msg.fitness_score = fitness_score;
     msg.num_iterations = max_iterations_;  // PCL的ICP不直接提供实际迭代次数
@@ -301,8 +427,6 @@ private:
     
     // 发布
     transform_pub_->publish(msg);
-    
-    RCLCPP_INFO(this->get_logger(), "变换矩阵已发布到 %s", output_topic_.c_str());
   }
   
 
@@ -339,10 +463,24 @@ private:
   int outlier_mean_k_;
   double outlier_stddev_mul_;
   
+  // 裁剪参数
+  bool use_crop_;
+  double crop_x_min_, crop_x_max_;
+  double crop_y_min_, crop_y_max_;
+  double crop_z_min_, crop_z_max_;
+  
   // 标定触发参数
   bool auto_calibrate_;
   double calibration_interval_;
   int min_points_required_;
+  
+  // 初始变换估计
+  bool use_initial_guess_;
+  double initial_x_;
+  double initial_y_;
+  double initial_z_;
+  double initial_yaw_;
+  Eigen::Matrix4f initial_transform_;
   
   // 线程安全
   std::mutex mutex_;

@@ -7,21 +7,37 @@ icp_calibration_node:
     # 输出话题
     output_topic: "/icp_transform"
     
-    # ICP算法参数
-    max_correspondence_distance: 0.3    # 最大对应点距离（米）
-    max_iterations: 50                  # 最大迭代次数
-    transformation_epsilon: 1e-9      # 变换收敛阈值
-    euclidean_fitness_epsilon: 1e-6      # 欧几里得适配度阈值
+    # ICP算法参数（放宽以找到更多对应点）
+    max_correspondence_distance: 2.0    # 最大对应点距离（米）- 放宽以找到对应点
+    max_iterations: 100                 # 最大迭代次数
+    transformation_epsilon: 1e-8        # 变换收敛阈值
+    euclidean_fitness_epsilon: 1e-4     # 欧几里得适配度阈值 - 放宽
     
     # 点云预处理参数
     use_voxel_filter: true              # 是否使用体素滤波
-    voxel_leaf_size: 0.01               # 体素叶子大小（米）
-    use_outlier_removal: true           # 是否去除离群点
+    voxel_leaf_size: 0.08               # 体素叶子大小（米）- 稍大保留更多点
+    use_outlier_removal: false          # 是否去除离群点（耗时，默认关闭）
     outlier_mean_k: 50                  # 离群点检测邻居数
     outlier_stddev_mul: 1.0             # 离群点标准差倍数
     
+    # 点云裁剪参数（先扩大范围确保有重叠）
+    use_crop: true                      # 是否裁剪点云
+    crop_x_min: -10.0                   # X方向最小值（米）- 扩大范围
+    crop_x_max: 10.0                    # X方向最大值（米）
+    crop_y_min: -10.0                   # Y方向最小值（米）
+    crop_y_max: 10.0                    # Y方向最大值（米）
+    crop_z_min: -2.0                    # Z方向最小值（米）- 包含地面以下
+    crop_z_max: 5.0                     # Z方向最大值（米）- 扩大高度
+    
     # 标定触发参数
     auto_calibrate: true                # 是否自动标定
-    calibration_interval: 60.0           # 自动标定间隔（秒）
+    calibration_interval: 5.0           # 自动标定间隔（秒）
     min_points_required: 100            # 最少点数要求
+    
+    # 初始变换估计（提高ICP收敛精度）
+    use_initial_guess: true             # 是否使用初始变换估计
+    initial_x: -0.353                   # X方向平移（米）：左后方45°，水平距离≈1.6*cos(45°)
+    initial_y: -0.353                   # Y方向平移（米）：左后方45°，水平距离≈1.6*cos(45°)
+    initial_z: 1.6                      # Z方向平移（米）：高度
+    initial_yaw: 0.7854                 # 偏航角（弧度）：45° = π/4 ≈ 0.7854
 
