@@ -48,6 +48,12 @@ public:
     this->declare_parameter<double>("control_frequency", 10.0); // 控制频率（Hz）
     this->declare_parameter<double>("velocity_scale", 0.5);     // 速度缩放因子
     
+    // 抖动抑制参数
+    this->declare_parameter<double>("velocity_smoothing_factor", 0.7);  // 速度平滑系数
+    this->declare_parameter<double>("force_deadzone", 0.05);            // 力死区阈值
+    this->declare_parameter<bool>("enable_oscillation_damping", true);  // 启用抖动抑制
+    this->declare_parameter<double>("reverse_hysteresis", 0.1);         // 倒退滞后阈值
+    
     // 话题名称参数
     this->declare_parameter<std::string>("goal_topic", "/goal_pose");
     this->declare_parameter<std::string>("obstacles_topic", "/obstacles");
@@ -69,6 +75,20 @@ public:
     
     double control_frequency = this->get_parameter("control_frequency").as_double();
     velocity_scale_ = this->get_parameter("velocity_scale").as_double();
+    
+    // 获取抖动抑制参数
+    velocity_smoothing_factor_ = this->get_parameter("velocity_smoothing_factor").as_double();
+    force_deadzone_ = this->get_parameter("force_deadzone").as_double();
+    enable_oscillation_damping_ = this->get_parameter("enable_oscillation_damping").as_bool();
+    reverse_hysteresis_ = this->get_parameter("reverse_hysteresis").as_double();
+    
+    // 初始化状态变量
+    last_cmd_vel_ = geometry_msgs::msg::Twist();
+    last_force_magnitude_ = 0.0;
+    oscillation_counter_ = 0;
+    stuck_counter_ = 0;
+    is_reversing_ = false;
+    last_linear_velocity_ = 0.0;
     
     std::string goal_topic = this->get_parameter("goal_topic").as_string();
     std::string obstacles_topic = this->get_parameter("obstacles_topic").as_string();
@@ -93,14 +113,6 @@ public:
       std::bind(&APFControllerNode::controlLoop, this));
     
     RCLCPP_INFO(this->get_logger(), "人工势场法控制器节点已启动");
-    RCLCPP_INFO(this->get_logger(), "  引力增益: %.2f", k_att_);
-    RCLCPP_INFO(this->get_logger(), "  斥力增益: %.2f (增强)", k_rep_);
-    RCLCPP_INFO(this->get_logger(), "  影响距离: %.2f m", d0_);
-    RCLCPP_INFO(this->get_logger(), "  最小安全距离: %.2f m", min_safe_distance_);
-    RCLCPP_INFO(this->get_logger(), "  机器人半径: %.2f m", robot_radius_);
-    RCLCPP_INFO(this->get_logger(), "  最大速度: %.2f m/s (允许倒退: %s)", 
-                max_velocity_, enable_reverse_ ? "是" : "否");
-    RCLCPP_INFO(this->get_logger(), "  控制频率: %.2f Hz", control_frequency);
   }
 
 private:
@@ -161,8 +173,19 @@ private:
     // 计算合力
     Eigen::Vector2d f_total = f_att + f_rep;
     
+    // 检测局部极小值和抖动
+    detectOscillation(f_total, min_obstacle_dist);
+    
     // 转换为速度命令
     geometry_msgs::msg::Twist cmd_vel = forceToVelocity(f_total, robot_pos, goal_pos, min_obstacle_dist);
+    
+    // 应用速度平滑
+    if (enable_oscillation_damping_) {
+      cmd_vel = smoothVelocity(cmd_vel);
+    }
+    
+    // 更新上一次命令
+    last_cmd_vel_ = cmd_vel;
     
     // 发布速度命令
     cmd_vel_pub_->publish(cmd_vel);
@@ -170,10 +193,12 @@ private:
     // 打印调试信息
     static int counter = 0;
     if (counter++ % 10 == 0) {  // 每秒打印一次（假设10Hz）
-      std::string warning = (min_obstacle_dist < min_safe_distance_) ? " ⚠️危险！" : "";
+      std::string warning = (min_obstacle_dist < min_safe_distance_) ? " 危险" : "";
+      std::string osc_warning = (oscillation_counter_ > 5) ? " 抖动" : "";
+      std::string stuck_warning = (stuck_counter_ > 10) ? " 卡住" : "";
       RCLCPP_INFO(this->get_logger(), 
-                  "到目标: %.2f m | 最近障碍: %.2f m%s | 引力: (%.2f, %.2f) | 斥力: (%.2f, %.2f) | 速度: v=%.2f, w=%.2f",
-                  distance_to_goal, min_obstacle_dist, warning.c_str(),
+                  "到目标: %.2f m | 最近障碍: %.2f m%s%s%s | 引力: (%.2f, %.2f) | 斥力: (%.2f, %.2f) | 速度: v=%.2f, w=%.2f",
+                  distance_to_goal, min_obstacle_dist, warning.c_str(), osc_warning.c_str(), stuck_warning.c_str(),
                   f_att.x(), f_att.y(), f_rep.x(), f_rep.y(),
                   cmd_vel.linear.x, cmd_vel.angular.z);
     }
@@ -255,14 +280,14 @@ private:
         // 极强斥力，指数增长
         force_magnitude = k_rep_ * 100.0 / std::max(effective_distance, 0.01);
         RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-                             "⚠️⚠️ 极度危险！距离障碍物仅 %.3f m", effective_distance);
+                             "极度危险！距离障碍物仅 %.3f m", effective_distance);
       }
       // 危险：距离 < 最小安全距离
       else if (effective_distance < min_safe_distance_) {
         // 强斥力
         force_magnitude = k_rep_ * 10.0 / std::max(effective_distance, 0.05);
         RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-                             "⚠️ 危险！距离障碍物 %.3f m", effective_distance);
+                             "危险！距离障碍物 %.3f m", effective_distance);
       }
       // 警告：距离 < 影响距离
       else if (effective_distance < d0_) {
@@ -283,13 +308,63 @@ private:
   }
   
   /**
-   * @brief 将合力转换为速度命令 - 改进版，支持倒退避障
+   * @brief 抖动检测
+   */
+  void detectOscillation(const Eigen::Vector2d& force, double /* min_obstacle_dist */)
+  {
+    double force_magnitude = force.norm();
+    
+    // 检测合力是否在死区内（局部极小值）
+    if (force_magnitude < force_deadzone_) {
+      stuck_counter_++;
+      if (stuck_counter_ > 20) {  // 连续2秒合力很小
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 3000,
+                             "检测到局部极小值！合力: %.3f", force_magnitude);
+      }
+    } else {
+      stuck_counter_ = std::max(0, stuck_counter_ - 1);
+    }
+    
+    // 检测合力方向快速变化（抖动）
+    double force_change = std::abs(force_magnitude - last_force_magnitude_);
+    if (force_change > 0.5 && force_magnitude > 0.1) {
+      oscillation_counter_++;
+      if (oscillation_counter_ > 10) {
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 3000,
+                             "检测到力震荡！变化: %.3f", force_change);
+      }
+    } else {
+      oscillation_counter_ = std::max(0, oscillation_counter_ - 1);
+    }
+    
+    last_force_magnitude_ = force_magnitude;
+  }
+  
+  /**
+   * @brief 速度平滑（低通滤波）
+   */
+  geometry_msgs::msg::Twist smoothVelocity(const geometry_msgs::msg::Twist& cmd_vel)
+  {
+    geometry_msgs::msg::Twist smoothed_vel;
+    
+    // 一阶低通滤波: v_smooth = α * v_new + (1-α) * v_old
+    double alpha = velocity_smoothing_factor_;
+    
+    smoothed_vel.linear.x = alpha * cmd_vel.linear.x + (1.0 - alpha) * last_cmd_vel_.linear.x;
+    smoothed_vel.angular.z = alpha * cmd_vel.angular.z + (1.0 - alpha) * last_cmd_vel_.angular.z;
+    
+    return smoothed_vel;
+  }
+  
+  /**
+   * @brief 将合力转换为速度命令 - 改进版，支持倒退避障和抖动抑制
    * 
    * 策略：
    * 1. 检查是否需要紧急避障（倒退）
    * 2. 线速度方向沿着合力方向
    * 3. 线速度大小与合力大小成正比，但限制在最大速度内
    * 4. 角速度用于调整机器人朝向，使其对准合力方向
+   * 5. 添加死区控制和局部极小值逃逸
    */
   geometry_msgs::msg::Twist forceToVelocity(const Eigen::Vector2d& force,
                                             const Eigen::Vector2d& robot_pos,
@@ -298,10 +373,41 @@ private:
   {
     geometry_msgs::msg::Twist cmd_vel;
     
-    // 如果合力太小，停止
     double force_magnitude = force.norm();
-    if (force_magnitude < 0.01) {
-      return cmd_vel;  // 返回零速度
+    
+    // === 局部极小值逃逸策略 ===
+    if (stuck_counter_ > 20) {
+      // 陷入局部极小值，尝试逃逸
+      // 策略：向侧方移动或随机扰动
+      double escape_direction = (std::rand() % 2 == 0) ? M_PI / 2 : -M_PI / 2;
+      Eigen::Vector2d to_goal = goal_pos - robot_pos;
+      double goal_theta = std::atan2(to_goal.y(), to_goal.x());
+      
+      cmd_vel.linear.x = min_velocity_ * 0.5;  // 慢速前进
+      cmd_vel.angular.z = (escape_direction > 0 ? 1.0 : -1.0) * max_angular_vel_ * 0.5;  // 使用escape_direction
+      
+      (void)goal_theta;  // 避免未使用警告，预留用于未来优化
+      
+      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                           "执行局部极小值逃逸策略");
+      
+      stuck_counter_ = 0;  // 重置计数器
+      return cmd_vel;
+    }
+    
+    // === 合力死区控制 ===
+    // 如果合力很小但不是卡住，谨慎处理
+    if (force_magnitude < force_deadzone_) {
+      // 保持上一次的速度方向，但逐渐减速
+      cmd_vel.linear.x = last_cmd_vel_.linear.x * 0.8;
+      cmd_vel.angular.z = last_cmd_vel_.angular.z * 0.8;
+      
+      // 如果已经很慢，完全停止
+      if (std::abs(cmd_vel.linear.x) < 0.05) {
+        return geometry_msgs::msg::Twist();  // 零速度
+      }
+      
+      return cmd_vel;
     }
     
     // 计算期望的运动方向（合力方向）
@@ -315,14 +421,26 @@ private:
     // 计算角度差
     double angle_diff = normalizeAngle(desired_theta - current_theta);
     
-    // === 关键改进：检查是否需要倒退 ===
+    // === 关键改进：检查是否需要倒退（带滞后） ===
     bool should_reverse = false;
     
-    // 条件1：障碍物非常近
-    if (min_obstacle_dist < min_safe_distance_) {
-      // 条件2：合力指向后方（与目标方向相反超过90度）
-      if (std::abs(angle_diff) > M_PI / 2) {
+    // 滞后控制：避免频繁切换
+    if (is_reversing_) {
+      // 已经在倒退，只有当条件明显改善才停止倒退
+      if (min_obstacle_dist > min_safe_distance_ + reverse_hysteresis_ || 
+          std::abs(angle_diff) < M_PI / 3) {
+        is_reversing_ = false;
+      } else {
         should_reverse = true;
+      }
+    } else {
+      // 未在倒退，检查是否需要开始倒退
+      // 条件1：障碍物非常近
+      // 条件2：合力指向后方（与目标方向相反超过90度）
+      if (min_obstacle_dist < min_safe_distance_ - reverse_hysteresis_ && 
+          std::abs(angle_diff) > M_PI / 2) {
+        should_reverse = true;
+        is_reversing_ = true;
       }
     }
     
@@ -335,7 +453,7 @@ private:
       linear_velocity = -std::min(linear_velocity, max_reverse_velocity_);
       
       RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-                           "🔙 紧急倒退避障！距离: %.2f m", min_obstacle_dist);
+                           "紧急倒退避障！距离: %.2f m", min_obstacle_dist);
     }
     else {
       // 正常前进
@@ -360,18 +478,31 @@ private:
       }
     }
     
-    // 计算角速度：用于调整朝向
+    // 计算角速度：用于调整朝向（改进：减少震荡）
     double angular_velocity = 2.0 * angle_diff;  // 比例控制
+    
+    // 如果角度差很小，避免不必要的转向（减少抖动）
+    if (std::abs(angle_diff) < 0.1) {  // 约5.7度
+      angular_velocity *= 0.3;  // 大幅降低角速度
+    }
     
     // 如果障碍物很近，增强转向能力
     if (min_obstacle_dist < min_safe_distance_ * 2.0) {
       angular_velocity *= 1.5;  // 增强转向
     }
     
+    // 如果线速度很小，降低角速度（避免原地旋转抖动）
+    if (std::abs(linear_velocity) < min_velocity_ * 0.5) {
+      angular_velocity *= 0.5;
+    }
+    
     angular_velocity = std::clamp(angular_velocity, -max_angular_vel_, max_angular_vel_);
     
     cmd_vel.linear.x = linear_velocity;
     cmd_vel.angular.z = angular_velocity;
+    
+    // 记录上一次线速度
+    last_linear_velocity_ = linear_velocity;
     
     return cmd_vel;
   }
@@ -431,6 +562,20 @@ private:
   
   // 控制参数
   double velocity_scale_;
+  
+  // 抖动抑制参数
+  double velocity_smoothing_factor_;  // 速度平滑系数 (0-1)
+  double force_deadzone_;             // 力死区阈值
+  bool enable_oscillation_damping_;   // 启用抖动抑制
+  double reverse_hysteresis_;         // 倒退滞后阈值
+  
+  // 状态变量
+  geometry_msgs::msg::Twist last_cmd_vel_;  // 上一次速度命令
+  double last_force_magnitude_;             // 上一次合力大小
+  int oscillation_counter_;                 // 抖动计数器
+  int stuck_counter_;                       // 卡住计数器
+  bool is_reversing_;                       // 是否正在倒退
+  double last_linear_velocity_;             // 上一次线速度
 };
 
 int main(int argc, char** argv)

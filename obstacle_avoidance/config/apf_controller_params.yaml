@@ -1,24 +1,22 @@
 apf_controller_node:
   ros__parameters:
-    # ========== APF算法参数 ==========
+
     # 引力增益系数（控制目标吸引力强度）
     k_att: 1.0
     
-    # 斥力增益系数（控制障碍物排斥力强度）⚡已增强
+    # 斥力增益系数（控制障碍物排斥力强度）
     k_rep: 5.0
     
-    # 障碍物影响距离（米）⚡已增大
+    # 障碍物影响距离（米）
     # 超过此距离的障碍物不产生斥力
     d0: 3.0
     
     # 到达目标的距离阈值（米）
     goal_threshold: 0.2
     
-    # 最小安全距离（米）⚡新增
-    # 低于此距离将触发紧急避障
+    # 最小安全距离（米）低于此距离将触发紧急避障
     min_safe_distance: 0.3
     
-    # ========== 机器人模型参数 ==========
     # 机器人半径（米）- 用于计算与障碍物的有效距离
     robot_radius: 0.5
     
@@ -26,25 +24,40 @@ apf_controller_node:
     max_velocity: 0.5
     
     # 最小线速度（米/秒）- 避免速度过小导致无法移动
-    min_velocity: 0.1
+    min_velocity: 0.0
     
     # 最大角速度（弧度/秒）
     max_angular_vel: 0.5
     
-    # 最大倒退速度（米/秒）⚡新增
-    max_reverse_velocity: 0.2
+    # 最大倒退速度（米/秒）
+    max_reverse_velocity: 0.1
     
-    # 是否允许倒退避障 ⚡新增
+    # 是否允许倒退避障 
     enable_reverse: true
     
-    # ========== 控制参数 ==========
     # 控制频率（Hz）
     control_frequency: 10.0
     
     # 速度缩放因子（将合力转换为速度时的比例系数）
     velocity_scale: 0.5
     
-    # ========== 话题名称 ==========
+    # 抖动抑制参数
+    # 速度平滑系数 (0-1)，越大响应越快，越小越平滑
+    # 建议值：0.7（平衡响应速度和平滑度）
+    velocity_smoothing_factor: 0.7
+    
+    # 力死区阈值（N），合力小于此值时进入死区控制
+    # 避免在局部极小值处频繁调整
+    force_deadzone: 0.05
+    
+    # 是否启用抖动抑制（推荐启用）
+    enable_oscillation_damping: true
+    
+    # 倒退滞后阈值（米），避免频繁切换前进/倒退
+    # 进入倒退条件：d < min_safe - hysteresis
+    # 退出倒退条件：d > min_safe + hysteresis
+    reverse_hysteresis: 0.1
+    
     # 目标位置话题
     goal_topic: "/goal_pose"
     
