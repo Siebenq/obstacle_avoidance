@@ -1,3 +1,5 @@
+Simulation:
+
 0.start robot
 ros2 launch robot_simulation simulate_gazebo.launch.py
 
@@ -26,3 +28,10 @@ ros2 launch obstacle_avoidance apf_controller.launch.py
   }
 }" 
 
+
+Offical test:
+get the pointcloud from iphone:
+ros2 launch rosbridge_server rosbridge_websocket_launch.xml
+
+(In addition:show the real-time video of iphone)
+ros2 launch video_client network_receiver.launch.py

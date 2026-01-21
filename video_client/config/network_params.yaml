@@ -1,23 +1,22 @@
 network_receiver_node:
   ros__parameters:
-    # 服务器IP地址
-    server_ip: "192.168.1.100"
+    # WebSocket服务器IP地址
+    server_ip: "192.168.3.13"
     
-    # 视频流端口
+    # WebSocket视频流端口
     video_port: 5000
     
-    # 点云流端口
-    pointcloud_port: 5001
-    
-    # 点云发布话题
-    pointcloud_topic: "/camera_person"
+    # WebSocket路径
+    ws_path: "/video"
     
     # 视频窗口名称
-    video_window_name: "Network Video Stream"
+    video_window_name: "WebSocket Video Stream"
     
-    # 是否显示视频
+    # 是否显示视频窗口
     display_video: true
     
-    # 网络缓冲区大小（字节）
-    buffer_size: 65536
-
+    # ROS图像话题（可选发布）
+    image_topic: "/camera/image_raw"
+    
+    # 是否发布ROS图像消息
+    publish_image: false

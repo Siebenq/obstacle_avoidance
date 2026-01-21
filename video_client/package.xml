@@ -2,8 +2,8 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>video_client</name>
-  <version>0.1.0</version>
-  <description>ROS2 package for receiving H.264 video and PCD point cloud data over network</description>
+  <version>0.2.0</version>
+  <description>ROS2 WebSocket H.264视频流接收客户端</description>
   <maintainer email="zjq@example.com">zjq</maintainer>
   <license>MIT</license>
 
@@ -14,13 +14,16 @@
   <depend>sensor_msgs</depend>
   <depend>std_msgs</depend>
   <depend>cv_bridge</depend>
-  
-  <!-- PCL dependencies -->
-  <depend>pcl_conversions</depend>
-  <depend>pcl_ros</depend>
 
-  <!-- OpenCV for video -->
-  <depend>image_transport</depend>
+  <!-- Boost for WebSocket (Beast) -->
+  <build_depend>libboost-all-dev</build_depend>
+  
+  <!-- FFmpeg for H.264 decoding -->
+  <build_depend>libavcodec-dev</build_depend>
+  <build_depend>libavutil-dev</build_depend>
+  <build_depend>libswscale-dev</build_depend>
+  
+  <exec_depend>ffmpeg</exec_depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
@@ -29,4 +32,3 @@
     <build_type>ament_cmake</build_type>
   </export>
 </package>
-

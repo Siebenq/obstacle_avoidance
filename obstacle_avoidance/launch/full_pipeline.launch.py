@@ -16,7 +16,7 @@ def generate_launch_description():
     # 获取默认参数文件路径
     fusion_params_file = os.path.join(pkg_share, 'config', 'fusion_params.yaml')
     obstacle_params_file = os.path.join(pkg_share, 'config', 'obstacle_detection_params.yaml')
-    mpc_params_file = os.path.join(pkg_share, 'config', 'mpc_controller_params.yaml')
+    apf_params_file = os.path.join(pkg_share, 'config', 'apf_controller_params.yaml')
     
     # 声明启动参数
     fusion_params_arg = DeclareLaunchArgument(
@@ -32,9 +32,9 @@ def generate_launch_description():
     )
     
 
-    mpc_params_arg = DeclareLaunchArgument(
-        'mpc_params_file',
-        default_value=mpc_params_file,
+    apf_params_arg = DeclareLaunchArgument(
+        'apf_params_file',
+        default_value=apf_params_file,
         description='MPC控制器参数文件的完整路径'
     )
     
@@ -60,12 +60,12 @@ def generate_launch_description():
     
     
     # 创建MPC控制器节点
-    mpc_controller_node = Node(
+    apf_controller_node = Node(
         package='bstacle_avoidance',
-        executable='mpc_controller_node',
-        name='mpc_controller_node',
+        executable='apf_controller_node',
+        name='apf_controller_node',
         output='screen',
-        parameters=[LaunchConfiguration('mpc_params_file')],
+        parameters=[LaunchConfiguration('apf_params_file')],
         emulate_tty=True,
     )
 
@@ -90,10 +90,10 @@ def generate_launch_description():
     return LaunchDescription([
         fusion_params_arg,
         obstacle_params_arg,
-        mpc_params_arg,
+        apf_params_arg,
         icp_calibration_node,
         TimerAction(period=5.0,actions=[pointcloud_fusion_node]),
         TimerAction(period=2.0, actions=[obstacle_detection_node]),
-        TimerAction(period=4.0, actions=[mpc_controller_node])
+        TimerAction(period=4.0, actions=[apf_controller_node])
     ])
 

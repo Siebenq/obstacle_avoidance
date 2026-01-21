@@ -2,6 +2,9 @@ cmake_minimum_required(VERSION 3.8)
 project(video_client)
 
 # 设置C++标准
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
@@ -12,19 +15,26 @@ find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(cv_bridge REQUIRED)
-find_package(image_transport REQUIRED)
-find_package(pcl_conversions REQUIRED)
-find_package(PCL REQUIRED COMPONENTS common io)
 find_package(OpenCV REQUIRED)
+find_package(Boost REQUIRED COMPONENTS system)
+
+# 查找FFmpeg库
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LIBAV REQUIRED
+  libavcodec
+  libavutil
+  libswscale
+)
 
 # 包含目录
 include_directories(
   include
-  ${PCL_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
+  ${Boost_INCLUDE_DIRS}
+  ${LIBAV_INCLUDE_DIRS}
 )
 
-# 创建网络接收节点
+# 创建WebSocket视频接收节点
 add_executable(network_receiver_node 
   src/network_receiver_node.cpp
 )
@@ -34,13 +44,17 @@ ament_target_dependencies(network_receiver_node
   sensor_msgs
   std_msgs
   cv_bridge
-  image_transport
-  pcl_conversions
 )
 
 target_link_libraries(network_receiver_node
-  ${PCL_LIBRARIES}
   ${OpenCV_LIBS}
+  ${Boost_LIBRARIES}
+  ${LIBAV_LIBRARIES}
+  pthread
+)
+
+target_link_directories(network_receiver_node PUBLIC
+  ${LIBAV_LIBRARY_DIRS}
 )
 
 # 安装节点
@@ -62,4 +76,3 @@ if(BUILD_TESTING)
 endif()
 
 ament_package()
-

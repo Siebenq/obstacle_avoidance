@@ -122,39 +122,39 @@ target_link_libraries(icp_calibration_node
 
 
 
-# 查找CasADi
-find_package(casadi QUIET)
-if(NOT casadi_FOUND)
-  message(STATUS "CasADi not found via find_package, trying pkg-config")
-  find_package(PkgConfig REQUIRED)
-  pkg_check_modules(CASADI REQUIRED casadi)
-  set(CASADI_INCLUDE_DIRS ${CASADI_INCLUDEDIR})
-  set(CASADI_LIBRARIES ${CASADI_LIBRARIES})
-else()
-  set(CASADI_INCLUDE_DIRS ${casadi_INCLUDE_DIRS})
-  set(CASADI_LIBRARIES casadi)
-endif()
+# # 查找CasADi
+# find_package(casadi QUIET)
+# if(NOT casadi_FOUND)
+#   message(STATUS "CasADi not found via find_package, trying pkg-config")
+#   find_package(PkgConfig REQUIRED)
+#   pkg_check_modules(CASADI REQUIRED casadi)
+#   set(CASADI_INCLUDE_DIRS ${CASADI_INCLUDEDIR})
+#   set(CASADI_LIBRARIES ${CASADI_LIBRARIES})
+# else()
+#   set(CASADI_INCLUDE_DIRS ${casadi_INCLUDE_DIRS})
+#   set(CASADI_LIBRARIES casadi)
+# endif()
 
-# 创建MPC控制器可执行文件
-add_executable(mpc_controller_node src/mpc_controller_node.cpp)
+# # 创建MPC控制器可执行文件
+# add_executable(mpc_controller_node src/mpc_controller_node.cpp)
 
-ament_target_dependencies(mpc_controller_node
-  rclcpp
-  geometry_msgs
-  nav_msgs
-  visualization_msgs
-)
+# ament_target_dependencies(mpc_controller_node
+#   rclcpp
+#   geometry_msgs
+#   nav_msgs
+#   visualization_msgs
+# )
 
 
-# 包含CasADi头文件
-target_include_directories(mpc_controller_node PRIVATE ${CASADI_INCLUDE_DIRS})
+# # 包含CasADi头文件
+# target_include_directories(mpc_controller_node PRIVATE ${CASADI_INCLUDE_DIRS})
 
-# 链接CasADi库和Eigen3
-target_link_libraries(mpc_controller_node 
-  ${CASADI_LIBRARIES}
-  ${cpp_typesupport_target}
-  Eigen3::Eigen
-)
+# # 链接CasADi库和Eigen3
+# target_link_libraries(mpc_controller_node 
+#   ${CASADI_LIBRARIES}
+#   ${cpp_typesupport_target}
+#   Eigen3::Eigen
+# )
 
 
 
@@ -180,7 +180,7 @@ install(TARGETS
   pointcloud_fusion_node
   obstacle_detection_node
   icp_calibration_node
-  mpc_controller_node
+# mpc_controller_node
   apf_controller_node
   DESTINATION lib/${PROJECT_NAME}
 )
