@@ -62,7 +62,8 @@ apf_controller_node:
     goal_topic: "/goal_pose"
     
     # 障碍物信息话题
-    obstacles_topic: "/obstacles"
+    # 注意：使用融合后的障碍物话题（在camera_link坐标系下）
+    obstacles_topic: "/obstacles_fused"
     
     # 速度控制命令话题
     cmd_vel_topic: "/cmd_vel"

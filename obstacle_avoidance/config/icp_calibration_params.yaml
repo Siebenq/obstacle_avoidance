@@ -40,4 +40,3 @@ icp_calibration_node:
     initial_y: -0.353                   # Y方向平移（米）：左后方45°，水平距离≈1.6*cos(45°)
     initial_z: 1.6                      # Z方向平移（米）：高度
     initial_yaw: 0.7854                 # 偏航角（弧度）：45° = π/4 ≈ 0.7854
-

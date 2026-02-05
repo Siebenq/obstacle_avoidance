@@ -1,47 +1,77 @@
 obstacle_detection_node:
   ros__parameters:
-    # 输入话题（融合后的点云）
-    input_topic: "/pointcloud_fused"
+    # 输入话题（双相机模式）
+    topic_person: "/camera_person/points"
+    topic_dog: "/camera_dog/points"
     
     # 输出话题
-    output_obstacle_topic: "/obstacles"          # 椭圆障碍物数组话题
-    output_marker_topic: "/obstacles_markers"    # 可视化标记话题
+    output_obstacle_topic_person: "/obstacles_person"
+    output_obstacle_topic_dog: "/obstacles_dog"
+    output_marker_topic_person: "/obstacles_markers_person"
+    output_marker_topic_dog: "/obstacles_markers_dog"
     
-    # 坐标系
-    frame_id: "base_link"
+    # 坐标系类型
+    # true = 光学坐标系 (Y向下, Z向前) - 典型的深度相机
+    # false = 标准坐标系 (Z向上, X向前) - 典型的机器人坐标系
+    is_optical_frame: true
     
-    # 点云降采样参数（体素滤波器叶子大小，单位：米）
-    # 值越小保留细节越多，但计算量越大
-    voxel_leaf_size: 0.1    # 改为0.1以保留更多细节，避免小障碍物被过滤
+    # ============ Person 相机参数（人视角，较高位置）============
+    # 假设相机安装在人的胸前/头部位置，高度约1.6m
+    person:
+      voxel_leaf_size: 0.05        # 点云降采样体素大小（米）
+      
+      # ROI范围（前方和侧向）
+      range_min_forward: 0.5       # 前方最近距离（避免相机自身反射）
+      range_max_forward: 12.0      # 前方最远距离（人视角看得更远）
+      range_min_lateral: -6.0      # 左侧范围
+      range_max_lateral: 6.0       # 右侧范围
+      
+      # 地面/天花板去除
+      remove_ground: true
+      ground_distance: 1.6         # 相机高度1.6m
+      remove_ceiling: true
+      ceiling_distance: 1.5        # 天花板在相机上方1.5m
+      
+      # 聚类参数
+      cluster_tolerance: 0.35      # 点之间最大距离（较大值，适应远距离点云稀疏）
+      min_cluster_size: 25         # 最小点数
+      max_cluster_size: 20000      # 最大点数
+      
+      # 椭圆放大系数（安全裕度，1.0=实际大小）
+      ellipse_scale_factor: 1.2
     
-    # ROI（感兴趣区域）滤波参数（单位：米）
-    # X轴范围（前后方向）
-    x_filter_min: -1.0   # 允许后方障碍物（倒车时需要）
-    x_filter_max: 15.0   # 增大前方检测距离
+    # ============ Dog 相机参数（机器狗视角，较低位置）============
+    # 假设相机安装在机器狗上，高度约0.3-0.5m
+    dog:
+      voxel_leaf_size: 0.03        # 更精细的降采样（提高精度）
+      
+      # ROI范围（前方和侧向）- 缩小范围提高精度
+      range_min_forward: 0.3       # 前方最近距离
+      range_max_forward: 6.0       # 前方最远距离（缩小范围）
+      range_min_lateral: -3.0      # 左侧范围（缩小）
+      range_max_lateral: 3.0       # 右侧范围（缩小）
+      
+      # 地面/天花板去除
+      remove_ground: true
+      ground_distance: 0.4         # 相机高度0.4m
+      remove_ceiling: true
+      ceiling_distance: 2.8        # 天花板在相机上方2.8m
+      
+      # 聚类参数 - 更严格以减少误检
+      cluster_tolerance: 0.15      # 减小容差，避免多个物体合并
+      min_cluster_size: 40         # 增加最小点数，减少噪声
+      max_cluster_size: 8000       # 减小最大点数
+      
+      # 椭圆放大系数（1.0=实际大小，不放大）
+      ellipse_scale_factor: 1.0
     
-    # Y轴范围（左右方向）
-    y_filter_min: -8.0   # 增大左侧范围
-    y_filter_max: 8.0    # 增大右侧范围
+    # ============ 通用参数 ============
+    # RANSAC地面检测（可选，更精确但更慢）
+    use_ransac_ground: false
+    ground_threshold: 0.15
     
-    # Z轴范围（上下方向）
-    z_filter_min: -2.0   # 放宽Z轴范围
-    z_filter_max: 3.0    # 允许更高的障碍物
-    
-    # 地面移除参数
-    remove_ground: true              # 是否移除地面点
-    ground_threshold: 0.15           # 减小阈值以更精确地识别地面（0.2->0.15）
-    
-    # 聚类参数
-    cluster_tolerance: 0.8           # 增大容差，更容易将稀疏点聚成簇（0.5->0.8）
-    min_cluster_size: 5              # 减小最小簇大小，检测更小的障碍物（10->5）
-    max_cluster_size: 25000          # 增大以支持大型障碍物
-    
-    # 障碍物过滤参数（单位：米）
-    min_obstacle_height: 0.05        # 减小最小高度，检测更矮的障碍物（0.1->0.05）
-    max_obstacle_height: 5.0         # 增大最大高度
-    min_obstacle_width: 0.02         # 减小最小宽度，检测更窄的障碍物（0.05->0.02）
-    max_obstacle_width: 10.0         # 增大最大宽度
-    
-    # 椭圆简化参数
-    ellipse_scale_factor: 1.2        # 椭圆放大系数（相对于PCA计算的2倍标准差）
-
+    # 障碍物过滤参数（米）
+    min_obstacle_height: 0.15      # 最小高度（过滤太矮的物体）
+    max_obstacle_height: 2.5       # 最大高度（过滤噪声）
+    min_obstacle_width: 0.08       # 最小宽度
+    max_obstacle_width: 3.0        # 最大宽度

@@ -70,6 +70,7 @@ ament_target_dependencies(pointcloud_fusion_node
   tf2_ros
   tf2_eigen
   geometry_msgs
+  visualization_msgs
 )
 
 target_link_libraries(pointcloud_fusion_node

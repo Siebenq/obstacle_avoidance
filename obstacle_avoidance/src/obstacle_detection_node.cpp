@@ -24,6 +24,7 @@
 #include "pcl/common/common.h"
 #include "pcl/common/centroid.h"
 #include "pcl/common/pca.h"
+#include "pcl/search/kdtree.h"
 
 #include <Eigen/Dense>
 #include <Eigen/Eigenvalues>
@@ -32,91 +33,178 @@ using namespace std::chrono_literals;
 
 class ObstacleDetectionNode : public rclcpp::Node
 {
+  // 相机参数结构体（需要在public之前定义）
+  struct CameraParams {
+    double voxel_leaf_size;
+    double range_min_forward, range_max_forward;
+    double range_min_lateral, range_max_lateral;
+    bool remove_ground;
+    double ground_distance;
+    bool remove_ceiling;
+    double ceiling_distance;
+    double cluster_tolerance;
+    int min_cluster_size;
+    int max_cluster_size;
+    double ellipse_scale_factor;  // 椭圆放大系数
+  };
+  
 public:
   ObstacleDetectionNode()
   : Node("obstacle_detection_node")
   {
-    // 声明参数
-    this->declare_parameter<std::string>("input_topic", "/pointcloud_fused");
-    this->declare_parameter<std::string>("output_obstacle_topic", "/obstacles");
-    this->declare_parameter<std::string>("output_marker_topic", "/obstacles_markers");
-    this->declare_parameter<std::string>("frame_id", "base_link");
+    // 声明参数 - 双相机点云话题
+    this->declare_parameter<std::string>("topic_person", "/camera_person/points");
+    this->declare_parameter<std::string>("topic_dog", "/camera_dog/points");
+    this->declare_parameter<std::string>("output_obstacle_topic_person", "/obstacles_person");
+    this->declare_parameter<std::string>("output_obstacle_topic_dog", "/obstacles_dog");
+    this->declare_parameter<std::string>("output_marker_topic_person", "/obstacles_markers_person");
+    this->declare_parameter<std::string>("output_marker_topic_dog", "/obstacles_markers_dog");
     
-    // 点云滤波参数
-    this->declare_parameter<double>("voxel_leaf_size", 0.05);
-    this->declare_parameter<double>("z_filter_min", -1.5);
-    this->declare_parameter<double>("z_filter_max", 2.0);
-    this->declare_parameter<double>("y_filter_min", -5.0);
-    this->declare_parameter<double>("y_filter_max", 5.0);
-    this->declare_parameter<double>("x_filter_min", 0.0);
-    this->declare_parameter<double>("x_filter_max", 10.0);
+    // 坐标系类型：optical（Y向下，Z向前）或 standard（Z向上，X向前）
+    this->declare_parameter<bool>("is_optical_frame", true);
     
-    // 地面分割参数
-    this->declare_parameter<bool>("remove_ground", true);
+    // ============ Person 相机参数 ============
+    this->declare_parameter<double>("person.voxel_leaf_size", 0.05);
+    this->declare_parameter<double>("person.range_min_forward", 0.3);
+    this->declare_parameter<double>("person.range_max_forward", 10.0);
+    this->declare_parameter<double>("person.range_min_lateral", -5.0);
+    this->declare_parameter<double>("person.range_max_lateral", 5.0);
+    this->declare_parameter<bool>("person.remove_ground", true);
+    this->declare_parameter<double>("person.ground_distance", 1.6);
+    this->declare_parameter<bool>("person.remove_ceiling", true);
+    this->declare_parameter<double>("person.ceiling_distance", 1.5);
+    this->declare_parameter<double>("person.cluster_tolerance", 0.3);
+    this->declare_parameter<int>("person.min_cluster_size", 30);
+    this->declare_parameter<int>("person.max_cluster_size", 15000);
+    this->declare_parameter<double>("person.ellipse_scale_factor", 1.2);
+    
+    // ============ Dog 相机参数 ============
+    this->declare_parameter<double>("dog.voxel_leaf_size", 0.04);
+    this->declare_parameter<double>("dog.range_min_forward", 0.3);
+    this->declare_parameter<double>("dog.range_max_forward", 6.0);
+    this->declare_parameter<double>("dog.range_min_lateral", -3.0);
+    this->declare_parameter<double>("dog.range_max_lateral", 3.0);
+    this->declare_parameter<bool>("dog.remove_ground", true);
+    this->declare_parameter<double>("dog.ground_distance", 0.4);
+    this->declare_parameter<bool>("dog.remove_ceiling", true);
+    this->declare_parameter<double>("dog.ceiling_distance", 2.5);
+    this->declare_parameter<double>("dog.cluster_tolerance", 0.2);
+    this->declare_parameter<int>("dog.min_cluster_size", 30);
+    this->declare_parameter<int>("dog.max_cluster_size", 8000);
+    this->declare_parameter<double>("dog.ellipse_scale_factor", 1.0);  // dog端不放大
+    
+    // ============ 通用参数 ============
     this->declare_parameter<double>("ground_threshold", 0.2);
-    
-    // 聚类参数
-    this->declare_parameter<double>("cluster_tolerance", 0.5);
-    this->declare_parameter<int>("min_cluster_size", 10);
-    this->declare_parameter<int>("max_cluster_size", 10000);
-    
-    // 障碍物过滤参数
+    this->declare_parameter<bool>("use_ransac_ground", false);
     this->declare_parameter<double>("min_obstacle_height", 0.1);
     this->declare_parameter<double>("max_obstacle_height", 3.0);
     this->declare_parameter<double>("min_obstacle_width", 0.05);
     this->declare_parameter<double>("max_obstacle_width", 5.0);
     
-    // 椭圆简化参数
-    this->declare_parameter<double>("ellipse_scale_factor", 1.2);  // 椭圆放大系数
+    // 获取话题参数
+    topic_person_ = this->get_parameter("topic_person").as_string();
+    topic_dog_ = this->get_parameter("topic_dog").as_string();
+    output_obstacle_topic_person_ = this->get_parameter("output_obstacle_topic_person").as_string();
+    output_obstacle_topic_dog_ = this->get_parameter("output_obstacle_topic_dog").as_string();
+    output_marker_topic_person_ = this->get_parameter("output_marker_topic_person").as_string();
+    output_marker_topic_dog_ = this->get_parameter("output_marker_topic_dog").as_string();
     
-    // 获取参数
-    input_topic_ = this->get_parameter("input_topic").as_string();
-    output_obstacle_topic_ = this->get_parameter("output_obstacle_topic").as_string();
-    output_marker_topic_ = this->get_parameter("output_marker_topic").as_string();
-    frame_id_ = this->get_parameter("frame_id").as_string();
+    is_optical_frame_ = this->get_parameter("is_optical_frame").as_bool();
     
-    voxel_leaf_size_ = this->get_parameter("voxel_leaf_size").as_double();
-    z_filter_min_ = this->get_parameter("z_filter_min").as_double();
-    z_filter_max_ = this->get_parameter("z_filter_max").as_double();
-    y_filter_min_ = this->get_parameter("y_filter_min").as_double();
-    y_filter_max_ = this->get_parameter("y_filter_max").as_double();
-    x_filter_min_ = this->get_parameter("x_filter_min").as_double();
-    x_filter_max_ = this->get_parameter("x_filter_max").as_double();
+    // 获取 Person 相机参数
+    person_params_.voxel_leaf_size = this->get_parameter("person.voxel_leaf_size").as_double();
+    person_params_.range_min_forward = this->get_parameter("person.range_min_forward").as_double();
+    person_params_.range_max_forward = this->get_parameter("person.range_max_forward").as_double();
+    person_params_.range_min_lateral = this->get_parameter("person.range_min_lateral").as_double();
+    person_params_.range_max_lateral = this->get_parameter("person.range_max_lateral").as_double();
+    person_params_.remove_ground = this->get_parameter("person.remove_ground").as_bool();
+    person_params_.ground_distance = this->get_parameter("person.ground_distance").as_double();
+    person_params_.remove_ceiling = this->get_parameter("person.remove_ceiling").as_bool();
+    person_params_.ceiling_distance = this->get_parameter("person.ceiling_distance").as_double();
+    person_params_.cluster_tolerance = this->get_parameter("person.cluster_tolerance").as_double();
+    person_params_.min_cluster_size = this->get_parameter("person.min_cluster_size").as_int();
+    person_params_.max_cluster_size = this->get_parameter("person.max_cluster_size").as_int();
+    person_params_.ellipse_scale_factor = this->get_parameter("person.ellipse_scale_factor").as_double();
     
-    remove_ground_ = this->get_parameter("remove_ground").as_bool();
+    // 获取 Dog 相机参数
+    dog_params_.voxel_leaf_size = this->get_parameter("dog.voxel_leaf_size").as_double();
+    dog_params_.range_min_forward = this->get_parameter("dog.range_min_forward").as_double();
+    dog_params_.range_max_forward = this->get_parameter("dog.range_max_forward").as_double();
+    dog_params_.range_min_lateral = this->get_parameter("dog.range_min_lateral").as_double();
+    dog_params_.range_max_lateral = this->get_parameter("dog.range_max_lateral").as_double();
+    dog_params_.remove_ground = this->get_parameter("dog.remove_ground").as_bool();
+    dog_params_.ground_distance = this->get_parameter("dog.ground_distance").as_double();
+    dog_params_.remove_ceiling = this->get_parameter("dog.remove_ceiling").as_bool();
+    dog_params_.ceiling_distance = this->get_parameter("dog.ceiling_distance").as_double();
+    dog_params_.cluster_tolerance = this->get_parameter("dog.cluster_tolerance").as_double();
+    dog_params_.min_cluster_size = this->get_parameter("dog.min_cluster_size").as_int();
+    dog_params_.max_cluster_size = this->get_parameter("dog.max_cluster_size").as_int();
+    dog_params_.ellipse_scale_factor = this->get_parameter("dog.ellipse_scale_factor").as_double();
+    
+    // 获取通用参数
     ground_threshold_ = this->get_parameter("ground_threshold").as_double();
-    
-    cluster_tolerance_ = this->get_parameter("cluster_tolerance").as_double();
-    min_cluster_size_ = this->get_parameter("min_cluster_size").as_int();
-    max_cluster_size_ = this->get_parameter("max_cluster_size").as_int();
-    
+    use_ransac_ground_ = this->get_parameter("use_ransac_ground").as_bool();
     min_obstacle_height_ = this->get_parameter("min_obstacle_height").as_double();
     max_obstacle_height_ = this->get_parameter("max_obstacle_height").as_double();
     min_obstacle_width_ = this->get_parameter("min_obstacle_width").as_double();
     max_obstacle_width_ = this->get_parameter("max_obstacle_width").as_double();
     
-    ellipse_scale_factor_ = this->get_parameter("ellipse_scale_factor").as_double();
-    
     // 创建订阅者
-    subscription_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-      input_topic_, 10,
-      std::bind(&ObstacleDetectionNode::pointcloud_callback, this, std::placeholders::_1));
+    sub_person_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
+      topic_person_, 10,
+      std::bind(&ObstacleDetectionNode::personCloudCallback, this, std::placeholders::_1));
+    
+    sub_dog_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
+      topic_dog_, 10,
+      std::bind(&ObstacleDetectionNode::dogCloudCallback, this, std::placeholders::_1));
     
     // 创建发布者
-    obstacle_pub_ = this->create_publisher<obstacle_avoidance::msg::EllipseObstacleArray>(
-      output_obstacle_topic_, 10);
-    marker_pub_ = this->create_publisher<visualization_msgs::msg::MarkerArray>(
-      output_marker_topic_, 10);
+    obstacle_pub_person_ = this->create_publisher<obstacle_avoidance::msg::EllipseObstacleArray>(
+      output_obstacle_topic_person_, 10);
+    obstacle_pub_dog_ = this->create_publisher<obstacle_avoidance::msg::EllipseObstacleArray>(
+      output_obstacle_topic_dog_, 10);
+    marker_pub_person_ = this->create_publisher<visualization_msgs::msg::MarkerArray>(
+      output_marker_topic_person_, 10);
+    marker_pub_dog_ = this->create_publisher<visualization_msgs::msg::MarkerArray>(
+      output_marker_topic_dog_, 10);
     
-    RCLCPP_INFO(this->get_logger(), "障碍物检测节点已启动");
-
+    RCLCPP_INFO(this->get_logger(), "障碍物检测节点已启动（双相机独立参数模式）");
+    RCLCPP_INFO(this->get_logger(), "  坐标系类型: %s", is_optical_frame_ ? "光学坐标系(Y下Z前)" : "标准坐标系(Z上X前)");
+    RCLCPP_INFO(this->get_logger(), "  Person相机: 话题=%s, 前方=%.1f~%.1fm, 地面距离=%.1fm, 天花板距离=%.1fm", 
+                topic_person_.c_str(), person_params_.range_min_forward, person_params_.range_max_forward,
+                person_params_.ground_distance, person_params_.ceiling_distance);
+    RCLCPP_INFO(this->get_logger(), "  Dog相机: 话题=%s, 前方=%.1f~%.1fm, 地面距离=%.1fm, 天花板距离=%.1fm", 
+                topic_dog_.c_str(), dog_params_.range_min_forward, dog_params_.range_max_forward,
+                dog_params_.ground_distance, dog_params_.ceiling_distance);
   }
 
 private:
-  void pointcloud_callback(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
+  void personCloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
+  {
+    RCLCPP_INFO_ONCE(this->get_logger(), "[person] 首次收到点云数据，frame_id: %s", 
+                     msg->header.frame_id.c_str());
+    processPointCloud(msg, obstacle_pub_person_, marker_pub_person_, "person", person_params_);
+  }
+  
+  void dogCloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
+  {
+    RCLCPP_INFO_ONCE(this->get_logger(), "[dog] 首次收到点云数据，frame_id: %s", 
+                     msg->header.frame_id.c_str());
+    processPointCloud(msg, obstacle_pub_dog_, marker_pub_dog_, "dog", dog_params_);
+  }
+  
+  /**
+   * @brief 通用点云处理函数
+   * 处理流程：1.ROI裁剪 → 2.去除地面/天花板 → 3.降采样 → 4.聚类 → 5.提取障碍物
+   */
+  void processPointCloud(
+    const sensor_msgs::msg::PointCloud2::SharedPtr msg,
+    rclcpp::Publisher<obstacle_avoidance::msg::EllipseObstacleArray>::SharedPtr& obstacle_pub,
+    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr& marker_pub,
+    const std::string& source_name,
+    const CameraParams& params)
   {
     try {
-      // 保存输入点云的坐标系，用于输出
       std::string input_frame_id = msg->header.frame_id;
       
       // 转换ROS消息到PCL点云
@@ -124,49 +212,78 @@ private:
       pcl::fromROSMsg(*msg, *cloud);
       
       if (cloud->points.empty()) {
-        RCLCPP_WARN(this->get_logger(), "接收到空点云数据");
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                             "[%s] 接收到空点云数据", source_name.c_str());
         return;
       }
       
-      RCLCPP_DEBUG(this->get_logger(), "接收到点云，点数: %zu", cloud->points.size());
+      size_t original_size = cloud->points.size();
       
-      // 1. 降采样
-      pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered(new pcl::PointCloud<pcl::PointXYZ>);
-      downsample(cloud, cloud_filtered);
-      
-      // 2. 范围滤波
+      // ============ 步骤1: ROI裁剪（减少处理的数据量）============
       pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_roi(new pcl::PointCloud<pcl::PointXYZ>);
-      applyROIFilter(cloud_filtered, cloud_roi);
+      applyROIFilter(cloud, cloud_roi, params);
       
       if (cloud_roi->points.empty()) {
-        RCLCPP_WARN(this->get_logger(), "ROI滤波后无点云数据");
-        publishEmptyObstacles(msg->header.stamp, input_frame_id);
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                             "[%s] ROI裁剪后无点云 (原始: %zu)", source_name.c_str(), original_size);
+        publishEmptyObstacles(obstacle_pub, marker_pub, msg->header.stamp, input_frame_id);
         return;
       }
       
-      // 3. 地面移除
-      pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_no_ground(new pcl::PointCloud<pcl::PointXYZ>);
-      if (remove_ground_) {
-        removeGround(cloud_roi, cloud_no_ground);
+      // ============ 步骤2: 去除地面和天花板 ============
+      pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_no_ground_ceiling(new pcl::PointCloud<pcl::PointXYZ>);
+      removeGroundAndCeiling(cloud_roi, cloud_no_ground_ceiling, params);
+      
+      if (cloud_no_ground_ceiling->points.empty()) {
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                             "[%s] 去除地面/天花板后无点云 (ROI后: %zu)", source_name.c_str(), cloud_roi->points.size());
+        publishEmptyObstacles(obstacle_pub, marker_pub, msg->header.stamp, input_frame_id);
+        return;
+      }
+      
+      // ============ 步骤3: 降采样 ============
+      pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_downsampled(new pcl::PointCloud<pcl::PointXYZ>);
+      downsample(cloud_no_ground_ceiling, cloud_downsampled, params.voxel_leaf_size);
+      
+      if (cloud_downsampled->points.empty()) {
+        publishEmptyObstacles(obstacle_pub, marker_pub, msg->header.stamp, input_frame_id);
+        return;
+      }
+      
+      // ============ 步骤4: 可选RANSAC精确地面去除 ============
+      pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_final(new pcl::PointCloud<pcl::PointXYZ>);
+      if (use_ransac_ground_) {
+        removeGroundRANSAC(cloud_downsampled, cloud_final);
       } else {
-        cloud_no_ground = cloud_roi;
+        cloud_final = cloud_downsampled;
       }
       
-      if (cloud_no_ground->points.empty()) {
-        // RCLCPP_WARN(this->get_logger(), "地面移除后无点云数据");
-        publishEmptyObstacles(msg->header.stamp, input_frame_id);
+      if (cloud_final->points.empty()) {
+        publishEmptyObstacles(obstacle_pub, marker_pub, msg->header.stamp, input_frame_id);
         return;
       }
       
-      // 4. 聚类提取障碍物
-      std::vector<pcl::PointCloud<pcl::PointXYZ>::Ptr> clusters;
-      clusterExtraction(cloud_no_ground, clusters);
+      RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                   "[%s] 预处理: %zu → ROI %zu → 去地面/天花板 %zu → 降采样 %zu", 
+                   source_name.c_str(), original_size, cloud_roi->points.size(),
+                   cloud_no_ground_ceiling->points.size(), cloud_final->points.size());
       
-      // 5. 提取椭圆障碍物信息
+      // ============ 步骤5: 聚类提取障碍物 ============
+      std::vector<pcl::PointCloud<pcl::PointXYZ>::Ptr> clusters;
+      clusterExtraction(cloud_final, clusters, params);
+      
+      if (clusters.empty()) {
+        RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 3000,
+                             "[%s] 聚类后无障碍物 (预处理后点数: %zu)", source_name.c_str(), cloud_final->points.size());
+        publishEmptyObstacles(obstacle_pub, marker_pub, msg->header.stamp, input_frame_id);
+        return;
+      }
+      
+      // ============ 步骤6: 提取椭圆障碍物信息 ============
       std::vector<obstacle_avoidance::msg::EllipseObstacle> obstacles;
       int id = 0;
       for (const auto& cluster : clusters) {
-        auto obs = extractEllipseObstacle(cluster, id);
+        auto obs = extractEllipseObstacle(cluster, id, params.ellipse_scale_factor);
         
         // 过滤不合理的障碍物
         if (obs.height >= min_obstacle_height_ && obs.height <= max_obstacle_height_ &&
@@ -177,60 +294,151 @@ private:
         }
       }
       
-      RCLCPP_INFO(this->get_logger(), "检测到有效障碍物数量: %zu", obstacles.size());
+      RCLCPP_INFO(this->get_logger(), "[%s] 原始 %zu → 预处理 %zu → 聚类 %zu → 有效障碍物 %zu", 
+                  source_name.c_str(), original_size, cloud_final->points.size(),
+                  clusters.size(), obstacles.size());
       
-      // 6. 发布障碍物数组（使用输入点云的坐标系）
-      publishObstacles(obstacles, msg->header.stamp, input_frame_id);
-      
-      // 7. 发布可视化标记（使用输入点云的坐标系）
-      publishObstacleMarkers(obstacles, msg->header.stamp, input_frame_id);
+      // ============ 步骤7: 发布结果 ============
+      publishObstacles(obstacle_pub, obstacles, msg->header.stamp, input_frame_id);
+      publishObstacleMarkers(marker_pub, obstacles, msg->header.stamp, input_frame_id);
       
     } catch (const std::exception& e) {
-      RCLCPP_ERROR(this->get_logger(), "点云处理失败: %s", e.what());
+      RCLCPP_ERROR(this->get_logger(), "[%s] 点云处理失败: %s", source_name.c_str(), e.what());
     }
   }
   
-  // 1.降采样
-  void downsample(const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud_in,
-                  pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud_out)
-  {
-    pcl::VoxelGrid<pcl::PointXYZ> voxel_filter;
-    voxel_filter.setInputCloud(cloud_in);
-    voxel_filter.setLeafSize(voxel_leaf_size_, voxel_leaf_size_, voxel_leaf_size_);
-    voxel_filter.filter(*cloud_out);
-  }
-  
-  // 2.ROI范围滤波
+  /**
+   * @brief ROI范围滤波
+   * 对于optical_frame: Z=前方深度, X=左右, Y=上下
+   * 对于standard_frame: X=前方, Y=左右, Z=上下
+   */
   void applyROIFilter(const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud_in,
-                      pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud_out)
+                      pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud_out,
+                      const CameraParams& params)
   {
     pcl::PassThrough<pcl::PointXYZ> pass;
+    pcl::PointCloud<pcl::PointXYZ>::Ptr temp1(new pcl::PointCloud<pcl::PointXYZ>);
     
-    // X轴滤波
-    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_temp1(new pcl::PointCloud<pcl::PointXYZ>);
+    if (is_optical_frame_) {
+      // 光学坐标系: Z=前方, X=右
+      // 前方距离过滤（Z轴）
+      pass.setInputCloud(cloud_in);
+      pass.setFilterFieldName("z");
+      pass.setFilterLimits(params.range_min_forward, params.range_max_forward);
+      pass.filter(*temp1);
+      
+      // 左右过滤（X轴）
+      pass.setInputCloud(temp1);
+      pass.setFilterFieldName("x");
+      pass.setFilterLimits(params.range_min_lateral, params.range_max_lateral);
+      pass.filter(*cloud_out);
+    } else {
+      // 标准坐标系: X=前方, Y=左右
+      pass.setInputCloud(cloud_in);
+      pass.setFilterFieldName("x");
+      pass.setFilterLimits(params.range_min_forward, params.range_max_forward);
+      pass.filter(*temp1);
+      
+      pass.setInputCloud(temp1);
+      pass.setFilterFieldName("y");
+      pass.setFilterLimits(params.range_min_lateral, params.range_max_lateral);
+      pass.filter(*cloud_out);
+    }
+  }
+  
+  /**
+   * @brief 去除地面和天花板点云
+   * 
+   * 参数含义（相对于相机位置）：
+   *   ground_distance: 相机到地面的距离（向下为正），过滤掉接近地面的点
+   *   ceiling_distance: 相机到天花板的距离（向上为正），过滤掉接近天花板的点
+   *   ground_margin: 地面上方保留的边距（不过滤的区域）
+   * 
+   * 对于optical_frame: Y轴向下为正
+   *   相机在Y=0，地面在Y=+ground_distance，天花板在Y=-ceiling_distance
+   *   保留范围: [-ceiling_distance + margin, ground_distance - margin]
+   */
+  void removeGroundAndCeiling(const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud_in,
+                               pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud_out,
+                               const CameraParams& params)
+  {
+    if (!params.remove_ground && !params.remove_ceiling) {
+      *cloud_out = *cloud_in;
+      return;
+    }
+    
+    pcl::PassThrough<pcl::PointXYZ> pass;
     pass.setInputCloud(cloud_in);
-    pass.setFilterFieldName("x");
-    pass.setFilterLimits(x_filter_min_, x_filter_max_);
-    pass.filter(*cloud_temp1);
     
-    // Y轴滤波
-    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_temp2(new pcl::PointCloud<pcl::PointXYZ>);
-    pass.setInputCloud(cloud_temp1);
-    pass.setFilterFieldName("y");
-    pass.setFilterLimits(y_filter_min_, y_filter_max_);
-    pass.filter(*cloud_temp2);
+    // 地面边距（保留地面上方多少距离的点）
+    double ground_margin = 0.1;  // 10cm
+    double ceiling_margin = 0.1; // 10cm
     
-    // Z轴滤波
-    pass.setInputCloud(cloud_temp2);
-    pass.setFilterFieldName("z");
-    pass.setFilterLimits(z_filter_min_, z_filter_max_);
+    if (is_optical_frame_) {
+      // 光学坐标系: Y轴向下
+      // 相机在 Y=0
+      // 地面在 Y = +ground_distance（如相机高1.6m，地面在Y=1.6）
+      // 天花板在 Y = -ceiling_distance（如天花板在相机上方2m，则Y=-2.0）
+      pass.setFilterFieldName("y");
+      
+      // 保留的Y范围：
+      // 最小Y（天花板方向）: -ceiling_distance + margin，或不限制
+      // 最大Y（地面方向）: ground_distance - margin，或不限制
+      double y_min = params.remove_ceiling ? (-params.ceiling_distance + ceiling_margin) : -100.0;
+      double y_max = params.remove_ground ? (params.ground_distance - ground_margin) : 100.0;
+      
+      pass.setFilterLimits(y_min, y_max);
+      
+      RCLCPP_INFO_ONCE(this->get_logger(), "[optical] 垂直过滤Y轴: %.2f ~ %.2f (地面距离:%.1f, 天花板距离:%.1f)", 
+                       y_min, y_max, params.ground_distance, params.ceiling_distance);
+    } else {
+      // 标准坐标系: Z轴向上
+      // 相机在某个Z高度，通常设为0
+      // 地面在 Z = -ground_distance
+      // 天花板在 Z = +ceiling_distance
+      pass.setFilterFieldName("z");
+      
+      double z_min = params.remove_ground ? (-params.ground_distance + ground_margin) : -100.0;
+      double z_max = params.remove_ceiling ? (params.ceiling_distance - ceiling_margin) : 100.0;
+      
+      pass.setFilterLimits(z_min, z_max);
+      
+      RCLCPP_INFO_ONCE(this->get_logger(), "[standard] 垂直过滤Z轴: %.2f ~ %.2f", z_min, z_max);
+    }
+    
     pass.filter(*cloud_out);
   }
   
-  // 3.地面移除
-  void removeGround(const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud_in,
-                    pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud_out)
+  /**
+   * @brief 降采样
+   */
+  void downsample(const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud_in,
+                  pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud_out,
+                  double voxel_leaf_size)
   {
+    if (cloud_in->points.size() < 100) {
+      // 点太少，不降采样
+      *cloud_out = *cloud_in;
+      return;
+    }
+    
+    pcl::VoxelGrid<pcl::PointXYZ> voxel_filter;
+    voxel_filter.setInputCloud(cloud_in);
+    voxel_filter.setLeafSize(voxel_leaf_size, voxel_leaf_size, voxel_leaf_size);
+    voxel_filter.filter(*cloud_out);
+  }
+  
+  /**
+   * @brief 使用RANSAC去除地面
+   */
+  void removeGroundRANSAC(const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud_in,
+                          pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud_out)
+  {
+    if (cloud_in->points.size() < 100) {
+      *cloud_out = *cloud_in;
+      return;
+    }
+    
     pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
     pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
     
@@ -243,12 +451,10 @@ private:
     seg.segment(*inliers, *coefficients);
     
     if (inliers->indices.empty()) {
-      RCLCPP_WARN(this->get_logger(), "未检测到地面平面");
       *cloud_out = *cloud_in;
       return;
     }
     
-    // 提取非地面点
     pcl::ExtractIndices<pcl::PointXYZ> extract;
     extract.setInputCloud(cloud_in);
     extract.setIndices(inliers);
@@ -256,18 +462,25 @@ private:
     extract.filter(*cloud_out);
   }
   
-  // 4.聚类提取
+  /**
+   * @brief 聚类提取
+   */
   void clusterExtraction(const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud_in,
-                         std::vector<pcl::PointCloud<pcl::PointXYZ>::Ptr>& clusters)
+                         std::vector<pcl::PointCloud<pcl::PointXYZ>::Ptr>& clusters,
+                         const CameraParams& params)
   {
+    if (cloud_in->points.size() < static_cast<size_t>(params.min_cluster_size)) {
+      return;
+    }
+    
     pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>);
     tree->setInputCloud(cloud_in);
     
     std::vector<pcl::PointIndices> cluster_indices;
     pcl::EuclideanClusterExtraction<pcl::PointXYZ> ec;
-    ec.setClusterTolerance(cluster_tolerance_);
-    ec.setMinClusterSize(min_cluster_size_);
-    ec.setMaxClusterSize(max_cluster_size_);
+    ec.setClusterTolerance(params.cluster_tolerance);
+    ec.setMinClusterSize(params.min_cluster_size);
+    ec.setMaxClusterSize(params.max_cluster_size);
     ec.setSearchMethod(tree);
     ec.setInputCloud(cloud_in);
     ec.extract(cluster_indices);
@@ -284,273 +497,273 @@ private:
     }
   }
   
-  // 5.提取椭圆障碍物信息（使用PCA计算椭圆参数）
+  /**
+   * @brief 提取椭圆障碍物信息
+   * 保持在原始点云坐标系中，不做坐标变换
+   * 对于光学坐标系：X=右, Y=下, Z=前
+   */
   obstacle_avoidance::msg::EllipseObstacle extractEllipseObstacle(
-    const pcl::PointCloud<pcl::PointXYZ>::Ptr& cluster, int id)
+    const pcl::PointCloud<pcl::PointXYZ>::Ptr& cluster, int id, double scale_factor)
   {
     obstacle_avoidance::msg::EllipseObstacle obs;
     obs.id = id;
     obs.point_count = cluster->points.size();
     
-    // 获取Z轴范围
+    // 获取边界框
     pcl::PointXYZ min_pt, max_pt;
     pcl::getMinMax3D(*cluster, min_pt, max_pt);
-    obs.z_min = min_pt.z;
-    obs.z_max = max_pt.z;
-    obs.height = max_pt.z - min_pt.z;
     
-    // 计算3D中心点
+    // 计算中心点
     Eigen::Vector4f centroid;
     pcl::compute3DCentroid(*cluster, centroid);
     
-    // 椭圆中心使用XY平面投影，Z使用障碍物底部（最低点）
-    // 这样椭圆就在障碍物的底部平面，与点云对齐
+    // 保持原始坐标系，不做变换
+    // 中心点就是质心的XYZ
     obs.center.x = centroid[0];
     obs.center.y = centroid[1];
-    obs.center.z = min_pt.z;  // 使用障碍物的最低点作为底部
+    obs.center.z = centroid[2];
     
-    // 计算到原点的距离（使用地面投影的xy坐标）
-    obs.distance = std::sqrt(obs.center.x * obs.center.x + 
-                             obs.center.y * obs.center.y);
+    // 记录边界
+    obs.z_min = min_pt.z;
+    obs.z_max = max_pt.z;
     
-    // 只使用XY平面的点进行PCA分析
-    Eigen::MatrixXf points_xy(2, cluster->points.size());
-    for (size_t i = 0; i < cluster->points.size(); ++i) {
-      points_xy(0, i) = cluster->points[i].x - centroid[0];
-      points_xy(1, i) = cluster->points[i].y - centroid[1];
+    if (is_optical_frame_) {
+      // 光学坐标系: X=右, Y=下, Z=前
+      // "高度"是Y方向的范围
+      obs.height = max_pt.y - min_pt.y;
+      
+      // 距离：到相机原点的距离（主要看Z方向，即深度）
+      obs.distance = centroid[2];  // 深度距离
+      
+      // PCA分析在XZ平面（水平面，因为Y是垂直方向）
+      Eigen::MatrixXf points_xz(2, cluster->points.size());
+      for (size_t i = 0; i < cluster->points.size(); ++i) {
+        points_xz(0, i) = cluster->points[i].x - centroid[0];  // 左右
+        points_xz(1, i) = cluster->points[i].z - centroid[2];  // 前后
+      }
+      
+      Eigen::Matrix2f covariance = points_xz * points_xz.transpose() / cluster->points.size();
+      Eigen::SelfAdjointEigenSolver<Eigen::Matrix2f> eigen_solver(covariance);
+      Eigen::Vector2f eigenvalues = eigen_solver.eigenvalues();
+      Eigen::Matrix2f eigenvectors = eigen_solver.eigenvectors();
+      
+      if (eigenvalues(0) > eigenvalues(1)) {
+        std::swap(eigenvalues(0), eigenvalues(1));
+        eigenvectors.col(0).swap(eigenvectors.col(1));
+      }
+      
+      obs.semi_major_axis = std::sqrt(eigenvalues(1)) * 2.0 * scale_factor;
+      obs.semi_minor_axis = std::sqrt(eigenvalues(0)) * 2.0 * scale_factor;
+      // 旋转角度：在XZ平面内的角度
+      obs.rotation_angle = std::atan2(eigenvectors(1, 1), eigenvectors(0, 1));
+      
+    } else {
+      // 标准坐标系: X=前, Y=左, Z=上
+      // "高度"是Z方向的范围
+      obs.height = max_pt.z - min_pt.z;
+      
+      // 距离：水平面上到原点的距离
+      obs.distance = std::sqrt(centroid[0] * centroid[0] + centroid[1] * centroid[1]);
+      
+      // PCA分析在XY平面（水平面）
+      Eigen::MatrixXf points_xy(2, cluster->points.size());
+      for (size_t i = 0; i < cluster->points.size(); ++i) {
+        points_xy(0, i) = cluster->points[i].x - centroid[0];
+        points_xy(1, i) = cluster->points[i].y - centroid[1];
+      }
+      
+      Eigen::Matrix2f covariance = points_xy * points_xy.transpose() / cluster->points.size();
+      Eigen::SelfAdjointEigenSolver<Eigen::Matrix2f> eigen_solver(covariance);
+      Eigen::Vector2f eigenvalues = eigen_solver.eigenvalues();
+      Eigen::Matrix2f eigenvectors = eigen_solver.eigenvectors();
+      
+      if (eigenvalues(0) > eigenvalues(1)) {
+        std::swap(eigenvalues(0), eigenvalues(1));
+        eigenvectors.col(0).swap(eigenvectors.col(1));
+      }
+      
+      obs.semi_major_axis = std::sqrt(eigenvalues(1)) * 2.0 * scale_factor;
+      obs.semi_minor_axis = std::sqrt(eigenvalues(0)) * 2.0 * scale_factor;
+      obs.rotation_angle = std::atan2(eigenvectors(1, 1), eigenvectors(0, 1));
     }
-    
-    // 计算协方差矩阵
-    Eigen::Matrix2f covariance = points_xy * points_xy.transpose() / cluster->points.size();
-    
-    // 特征值分解
-    Eigen::SelfAdjointEigenSolver<Eigen::Matrix2f> eigen_solver(covariance);
-    Eigen::Vector2f eigenvalues = eigen_solver.eigenvalues();
-    Eigen::Matrix2f eigenvectors = eigen_solver.eigenvectors();
-    
-    // 按特征值降序排列（大的对应长半轴）
-    if (eigenvalues(0) > eigenvalues(1)) {
-      std::swap(eigenvalues(0), eigenvalues(1));
-      eigenvectors.col(0).swap(eigenvectors.col(1));
-    }
-    
-    // 椭圆半轴长度（使用标准差的2倍，并乘以缩放因子）
-    obs.semi_major_axis = std::sqrt(eigenvalues(1)) * 2.0 * ellipse_scale_factor_;
-    obs.semi_minor_axis = std::sqrt(eigenvalues(0)) * 2.0 * ellipse_scale_factor_;
     
     // 确保最小尺寸
     obs.semi_major_axis = std::max(obs.semi_major_axis, min_obstacle_width_ / 2.0);
     obs.semi_minor_axis = std::max(obs.semi_minor_axis, min_obstacle_width_ / 2.0);
     
-    // 旋转角度（长轴相对于X轴的角度）
-    obs.rotation_angle = std::atan2(eigenvectors(1, 1), eigenvectors(0, 1));
-    
-    RCLCPP_DEBUG(this->get_logger(), 
-      "障碍物 %d: 底部(%.2f, %.2f, %.2f), 长轴=%.2f, 短轴=%.2f, 角度=%.2f°, 高度=%.2f",
-      id, obs.center.x, obs.center.y, obs.center.z,
-      obs.semi_major_axis, obs.semi_minor_axis, 
-      obs.rotation_angle * 180.0 / M_PI, obs.height);
-    
     return obs;
   }
   
-  // 6.发布障碍物数组
-  void publishObstacles(const std::vector<obstacle_avoidance::msg::EllipseObstacle>& obstacles,
-                        const rclcpp::Time& timestamp,
-                        const std::string& frame_id)
+  void publishObstacles(
+    rclcpp::Publisher<obstacle_avoidance::msg::EllipseObstacleArray>::SharedPtr& pub,
+    const std::vector<obstacle_avoidance::msg::EllipseObstacle>& obstacles,
+    const rclcpp::Time& timestamp,
+    const std::string& frame_id)
   {
     obstacle_avoidance::msg::EllipseObstacleArray msg;
     msg.header.stamp = timestamp;
-    msg.header.frame_id = frame_id;  // 使用输入点云的坐标系
+    msg.header.frame_id = frame_id;
     msg.obstacles = obstacles;
-    
-    obstacle_pub_->publish(msg);
+    pub->publish(msg);
   }
   
-  // 发布空障碍物消息
-  void publishEmptyObstacles(const rclcpp::Time& timestamp, const std::string& frame_id = "base_link")
+  void publishEmptyObstacles(
+    rclcpp::Publisher<obstacle_avoidance::msg::EllipseObstacleArray>::SharedPtr& obstacle_pub,
+    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr& marker_pub,
+    const rclcpp::Time& timestamp,
+    const std::string& frame_id)
   {
     obstacle_avoidance::msg::EllipseObstacleArray msg;
     msg.header.stamp = timestamp;
-    msg.header.frame_id = frame_id;  // 使用输入点云的坐标系
-    obstacle_pub_->publish(msg);
+    msg.header.frame_id = frame_id;
+    obstacle_pub->publish(msg);
     
-    // 同时清除可视化标记
     visualization_msgs::msg::MarkerArray marker_array;
     visualization_msgs::msg::Marker delete_marker;
-    delete_marker.header.frame_id = frame_id;  // 使用输入点云的坐标系
+    delete_marker.header.frame_id = frame_id;
     delete_marker.header.stamp = timestamp;
-    delete_marker.ns = "ellipse_obstacles";
+    delete_marker.ns = "obstacles";  // 与publishObstacleMarkers保持一致
     delete_marker.action = visualization_msgs::msg::Marker::DELETEALL;
     marker_array.markers.push_back(delete_marker);
-    marker_pub_->publish(marker_array);
+    
+    visualization_msgs::msg::Marker delete_text;
+    delete_text.header.frame_id = frame_id;
+    delete_text.header.stamp = timestamp;
+    delete_text.ns = "obstacle_text";
+    delete_text.action = visualization_msgs::msg::Marker::DELETEALL;
+    marker_array.markers.push_back(delete_text);
+    
+    marker_pub->publish(marker_array);
   }
   
-  // 7.发布障碍物可视化标记（椭圆柱体）
   void publishObstacleMarkers(
+    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr& pub,
     const std::vector<obstacle_avoidance::msg::EllipseObstacle>& obstacles,
     const rclcpp::Time& timestamp,
     const std::string& frame_id)
   {
     visualization_msgs::msg::MarkerArray marker_array;
     
-    // 先删除所有旧标记
+    // 删除旧标记
     visualization_msgs::msg::Marker delete_marker;
-    delete_marker.header.frame_id = frame_id;  // 使用输入点云的坐标系
+    delete_marker.header.frame_id = frame_id;
     delete_marker.header.stamp = timestamp;
-    delete_marker.ns = "ellipse_obstacles";
+    delete_marker.ns = "obstacles";
     delete_marker.action = visualization_msgs::msg::Marker::DELETEALL;
     marker_array.markers.push_back(delete_marker);
     
-    // 为每个障碍物创建椭圆柱体标记
     for (const auto& obs : obstacles) {
-      // 椭圆柱体标记 - 从地面向上延伸
+      // 使用圆柱体显示椭圆障碍物
       visualization_msgs::msg::Marker cylinder_marker;
-      cylinder_marker.header.frame_id = frame_id;  // 使用输入点云的坐标系
+      cylinder_marker.header.frame_id = frame_id;
       cylinder_marker.header.stamp = timestamp;
-      cylinder_marker.ns = "ellipse_obstacles";
-      cylinder_marker.id = obs.id * 2;
+      cylinder_marker.ns = "obstacles";
+      cylinder_marker.id = obs.id;
       cylinder_marker.type = visualization_msgs::msg::Marker::CYLINDER;
       cylinder_marker.action = visualization_msgs::msg::Marker::ADD;
       
-      // 位置：椭圆柱体的中心在障碍物中间
-      // 底部在obs.center.z（障碍物最低点），顶部在obs.center.z + obs.height
+      // 位置：质心坐标
       cylinder_marker.pose.position.x = obs.center.x;
       cylinder_marker.pose.position.y = obs.center.y;
-      cylinder_marker.pose.position.z = obs.center.z + obs.height / 2.0;  // 中心 = 底部 + 高度/2
+      cylinder_marker.pose.position.z = obs.center.z;
       
-      // 旋转（椭圆的方向）
-      Eigen::Quaterniond q(Eigen::AngleAxisd(obs.rotation_angle, Eigen::Vector3d::UnitZ()));
-      cylinder_marker.pose.orientation.x = q.x();
-      cylinder_marker.pose.orientation.y = q.y();
-      cylinder_marker.pose.orientation.z = q.z();
-      cylinder_marker.pose.orientation.w = q.w();
-      
-      // 尺寸（椭圆柱体）
-      cylinder_marker.scale.x = obs.semi_major_axis * 2.0;  // 长轴直径
-      cylinder_marker.scale.y = obs.semi_minor_axis * 2.0;  // 短轴直径
-      cylinder_marker.scale.z = obs.height;  // 从地面到顶部的高度
-      
-      // 颜色（根据距离）
-      cylinder_marker.color.r = std::min(1.0, 5.0 / (obs.distance + 1.0));
-      cylinder_marker.color.g = std::min(1.0, obs.distance / 5.0);
-      cylinder_marker.color.b = 0.2;
-      cylinder_marker.color.a = 0.6;
-      
-      cylinder_marker.lifetime = rclcpp::Duration::from_seconds(0.2);
-      marker_array.markers.push_back(cylinder_marker);
-      
-      // 地面椭圆标记（LINE_STRIP画椭圆轮廓）
-      visualization_msgs::msg::Marker ground_ellipse;
-      ground_ellipse.header.frame_id = frame_id;  // 使用输入点云的坐标系
-      ground_ellipse.header.stamp = timestamp;
-      ground_ellipse.ns = "ground_projection";
-      ground_ellipse.id = obs.id * 3;
-      ground_ellipse.type = visualization_msgs::msg::Marker::LINE_STRIP;
-      ground_ellipse.action = visualization_msgs::msg::Marker::ADD;
-      
-      // 在障碍物底部画椭圆（稍微高一点避免z-fighting）
-      ground_ellipse.pose.position.x = obs.center.x;
-      ground_ellipse.pose.position.y = obs.center.y;
-      ground_ellipse.pose.position.z = obs.center.z + 0.01;  // 在障碍物底部上方1cm
-      ground_ellipse.pose.orientation.w = 1.0;
-      
-      ground_ellipse.scale.x = 0.05;  // 线宽
-      
-      ground_ellipse.color.r = 1.0;
-      ground_ellipse.color.g = 0.5;
-      ground_ellipse.color.b = 0.0;
-      ground_ellipse.color.a = 0.9;
-      
-      // 生成椭圆轮廓点
-      int num_points = 36;  // 36个点画椭圆
-      for (int i = 0; i <= num_points; ++i) {
-        double angle = 2.0 * M_PI * i / num_points;
-        
-        // 椭圆参数方程（局部坐标系）
-        double x_local = obs.semi_major_axis * std::cos(angle);
-        double y_local = obs.semi_minor_axis * std::sin(angle);
-        
-        // 旋转到全局坐标系
-        double cos_rot = std::cos(obs.rotation_angle);
-        double sin_rot = std::sin(obs.rotation_angle);
-        double x_global = x_local * cos_rot - y_local * sin_rot;
-        double y_global = x_local * sin_rot + y_local * cos_rot;
-        
-        geometry_msgs::msg::Point p;
-        p.x = x_global;
-        p.y = y_global;
-        p.z = 0.0;
-        ground_ellipse.points.push_back(p);
+      // 旋转：使圆柱体垂直于地面
+      // RViz中CYLINDER默认沿Z轴
+      // 光学坐标系：Y轴向下（垂直方向），需要绕X轴旋转90度
+      // 标准坐标系：Z轴向上（垂直方向），无需旋转
+      if (is_optical_frame_) {
+        // 绕X轴旋转90度，使圆柱体沿Y轴（垂直方向）
+        Eigen::Quaterniond q(Eigen::AngleAxisd(M_PI_2, Eigen::Vector3d::UnitX()));
+        cylinder_marker.pose.orientation.x = q.x();
+        cylinder_marker.pose.orientation.y = q.y();
+        cylinder_marker.pose.orientation.z = q.z();
+        cylinder_marker.pose.orientation.w = q.w();
+      } else {
+        // 标准坐标系：圆柱体默认沿Z轴，已经是垂直的
+        cylinder_marker.pose.orientation.x = 0.0;
+        cylinder_marker.pose.orientation.y = 0.0;
+        cylinder_marker.pose.orientation.z = 0.0;
+        cylinder_marker.pose.orientation.w = 1.0;
       }
       
-      ground_ellipse.lifetime = rclcpp::Duration::from_seconds(0.2);
-      marker_array.markers.push_back(ground_ellipse);
+      // 尺寸：x=长轴直径，y=短轴直径，z=高度
+      cylinder_marker.scale.x = std::max(0.1, static_cast<double>(obs.semi_major_axis * 2.0));
+      cylinder_marker.scale.y = std::max(0.1, static_cast<double>(obs.semi_minor_axis * 2.0));
+      cylinder_marker.scale.z = std::max(0.1, static_cast<double>(obs.height));
+      
+      // 颜色：根据距离变化（近红远绿）
+      double dist_ratio = std::min(1.0, obs.distance / 5.0);
+      cylinder_marker.color.r = 1.0 - dist_ratio * 0.5;
+      cylinder_marker.color.g = dist_ratio * 0.8;
+      cylinder_marker.color.b = 0.1;
+      cylinder_marker.color.a = 0.7;
+      
+      cylinder_marker.lifetime = rclcpp::Duration::from_seconds(0.5);
+      marker_array.markers.push_back(cylinder_marker);
       
       // 文本标记
       visualization_msgs::msg::Marker text_marker;
-      text_marker.header.frame_id = frame_id;  // 使用输入点云的坐标系
+      text_marker.header.frame_id = frame_id;
       text_marker.header.stamp = timestamp;
-      text_marker.ns = "ellipse_text";
-      text_marker.id = obs.id * 3 + 1;
+      text_marker.ns = "obstacle_text";
+      text_marker.id = obs.id + 1000;
       text_marker.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
       text_marker.action = visualization_msgs::msg::Marker::ADD;
       
-      // 文本在障碍物顶部上方
+      // 文本位置：在障碍物上方
       text_marker.pose.position.x = obs.center.x;
-      text_marker.pose.position.y = obs.center.y;
-      text_marker.pose.position.z = obs.center.z + obs.height + 0.3;  // 底部 + 高度 + 0.3m
+      text_marker.pose.position.y = obs.center.y - 0.3;  // 光学坐标系上方是-Y
+      text_marker.pose.position.z = obs.center.z;
       text_marker.pose.orientation.w = 1.0;
       
-      text_marker.scale.z = 0.3;
+      text_marker.scale.z = 0.15;
       
       text_marker.color.r = 1.0;
       text_marker.color.g = 1.0;
       text_marker.color.b = 1.0;
       text_marker.color.a = 1.0;
       
-      char text[256];
-      snprintf(text, sizeof(text), 
-               "ID:%d\nDist:%.2fm\nSize:%.2f×%.2fm\nH:%.2fm",
-               obs.id, obs.distance, 
-               obs.semi_major_axis * 2.0, obs.semi_minor_axis * 2.0,
-               obs.height);
+      char text[64];
+      snprintf(text, sizeof(text), "ID%d:%.1fm", obs.id, obs.distance);
       text_marker.text = text;
       
-      text_marker.lifetime = rclcpp::Duration::from_seconds(0.2);
+      text_marker.lifetime = rclcpp::Duration::from_seconds(0.5);
       marker_array.markers.push_back(text_marker);
     }
     
-    marker_pub_->publish(marker_array);
+    pub->publish(marker_array);
   }
 
-  // 订阅者和发布者
-  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subscription_;
-  rclcpp::Publisher<obstacle_avoidance::msg::EllipseObstacleArray>::SharedPtr obstacle_pub_;
-  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_;
+  // 订阅者
+  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_person_;
+  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_dog_;
   
-  // 参数
-  std::string input_topic_;
-  std::string output_obstacle_topic_;
-  std::string output_marker_topic_;
-  std::string frame_id_;
+  // 发布者
+  rclcpp::Publisher<obstacle_avoidance::msg::EllipseObstacleArray>::SharedPtr obstacle_pub_person_;
+  rclcpp::Publisher<obstacle_avoidance::msg::EllipseObstacleArray>::SharedPtr obstacle_pub_dog_;
+  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_person_;
+  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_dog_;
   
-  double voxel_leaf_size_;
-  double z_filter_min_, z_filter_max_;
-  double y_filter_min_, y_filter_max_;
-  double x_filter_min_, x_filter_max_;
+  // 话题参数
+  std::string topic_person_;
+  std::string topic_dog_;
+  std::string output_obstacle_topic_person_;
+  std::string output_obstacle_topic_dog_;
+  std::string output_marker_topic_person_;
+  std::string output_marker_topic_dog_;
   
-  bool remove_ground_;
+  // 坐标系类型
+  bool is_optical_frame_;
+  
+  // 分相机参数
+  CameraParams person_params_;
+  CameraParams dog_params_;
+  
+  // 通用参数
   double ground_threshold_;
-  
-  double cluster_tolerance_;
-  int min_cluster_size_;
-  int max_cluster_size_;
-  
+  bool use_ransac_ground_;
   double min_obstacle_height_, max_obstacle_height_;
   double min_obstacle_width_, max_obstacle_width_;
-  
-  double ellipse_scale_factor_;
 };
 
 int main(int argc, char * argv[])

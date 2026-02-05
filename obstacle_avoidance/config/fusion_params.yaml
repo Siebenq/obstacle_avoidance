@@ -1,39 +1,43 @@
-pointcloud_fusion_node:
+obstacle_fusion_node:
   ros__parameters:
-    # 输入话题
-    topic1: "/camera_dog/points"
-    topic2: "/camera_person/points"
-    topic3: "/icp_transform"
+    # 输入话题 - 两个障碍物话题
+    obstacle_topic1: "/obstacles_dog"       # Dog相机检测的障碍物（作为基准坐标系）
+    obstacle_topic2: "/obstacles_person"    # Person相机检测的障碍物
+    transform_topic: "/icp_transform"       # ICP计算的变换矩阵（topic2 -> topic1）
+    
     # 输出话题
-    output_topic: "/pointcloud_fused"
+    output_obstacle_topic: "/obstacles_fused"           # 融合后的障碍物（camera_link坐标系）
+    output_marker_topic: "/obstacles_markers_fused"     # camera_link坐标系下的可视化
+    output_marker_topic_dog: "/obstacles_markers_dog_frame"  # dog坐标系下的可视化（用于调试）
     
     # 目标坐标系
-    target_frame: "base_link"
+    target_frame: "camera_link"
     
-    # # 是否使用坐标变换
-    # use_transform: true
+    # 是否是光学坐标系（决定圆柱体如何垂直显示）
+    # true = 光学坐标系 (Y向下, Z向前) - 深度相机
+    # false = 标准坐标系 (Z向上, X向前)
+    is_optical_frame: true
     
-    # 是否使用TF2自动查询变换（推荐）
-    # 如果为true，会忽略下面的手动配置参数，直接从TF树查询
-    # use_tf2: true
-    use_tf2: false
+    # ============ 地面对齐参数 ============
+    # 将所有障碍物底面对齐到同一平面，消除因相机高度不同导致的底面差异
+    align_to_ground: true                # 是否启用地面对齐
+    use_auto_ground: true                # true=自动检测地面（使用最低障碍物底面）
+                                         # false=使用手动指定的 ground_plane_height
+    ground_plane_height: 0.0             # 手动模式下的地面高度（在dog坐标系中）
+                                         # 光学坐标系：正值表示相机下方
     
-    # # 从topic2坐标系到topic1坐标系的坐标变换
-    # # topic2在topic1的左后方45°、距离0.5m、上方1.6m
-    # # 平移（米）
-    # # x = -0.5 * cos(45°) = -0.354（后方）
-    # # y = 0.5 * sin(45°) = 0.354（左方）
-    # # z = 1.6（上方）
-    transform_x: -0.354   # 后方（负X方向）
-    transform_y: 0.354    # 左方（正Y方向）
-    transform_z: 1.6      # 上方（正Z方向）
-    
-    # 旋转（弧度）- Roll, Pitch, Yaw
-    # 两个相机朝向一致，所以旋转角度都为0
-    transform_roll: 0.0
-    transform_pitch: 0.0
-    transform_yaw: 0.0
-    
-    # # 队列大小
-    # queue_size: 10
-
+    # topic1坐标系（camera_dog_optical_frame）到 camera_link 的固定变换
+    # 光学坐标系: Z向前, X向右, Y向下
+    # camera_link: X向前, Y向左, Z向上
+    # 
+    # 从optical_frame到camera_link的变换：
+    # - 绕X轴旋转-90° (Y向下变成Z向下)
+    # - 再绕Z轴旋转-90° (原Z变成X)
+    #
+    # 如果暂时不需要变换，设为0测试
+    frame1_to_camera_link_x: 0.0
+    frame1_to_camera_link_y: 0.0
+    frame1_to_camera_link_z: 0.0
+    frame1_to_camera_link_roll: -1.5708     # -π/2 = -90°
+    frame1_to_camera_link_pitch: 0.0
+    frame1_to_camera_link_yaw: -1.5708      # -π/2 = -90°

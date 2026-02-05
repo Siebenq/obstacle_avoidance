@@ -135,6 +135,31 @@ private:
   {
     obstacles_ = *msg;
     has_obstacles_ = true;
+    
+    // 调试日志：确认收到障碍物数据
+    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                "收到 %zu 个障碍物 (坐标系: %s)", 
+                obstacles_.obstacles.size(),
+                obstacles_.header.frame_id.c_str());
+    
+    // 打印最近障碍物信息
+    if (!obstacles_.obstacles.empty()) {
+      double min_dist = std::numeric_limits<double>::max();
+      size_t closest_idx = 0;
+      for (size_t i = 0; i < obstacles_.obstacles.size(); ++i) {
+        const auto& obs = obstacles_.obstacles[i];
+        double dist = std::sqrt(obs.center.x * obs.center.x + obs.center.y * obs.center.y);
+        if (dist < min_dist) {
+          min_dist = dist;
+          closest_idx = i;
+        }
+      }
+      const auto& closest = obstacles_.obstacles[closest_idx];
+      RCLCPP_DEBUG(this->get_logger(),
+                  "最近障碍物: 位置(%.2f, %.2f), 距离=%.2f m, 尺寸=%.2f x %.2f",
+                  closest.center.x, closest.center.y, min_dist,
+                  closest.semi_major_axis, closest.semi_minor_axis);
+    }
   }
   
   /**
