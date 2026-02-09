@@ -18,7 +18,7 @@ obstacle_detection_node:
     # ============ Person 相机参数（人视角，较高位置）============
     # 假设相机安装在人的胸前/头部位置，高度约1.6m
     person:
-      voxel_leaf_size: 0.05        # 点云降采样体素大小（米）
+      voxel_leaf_size: 0.03        # 减小体素保留更多细节，利于分离相邻物体
       
       # ROI范围（前方和侧向）
       range_min_forward: 0.5       # 前方最近距离（避免相机自身反射）
@@ -32,9 +32,13 @@ obstacle_detection_node:
       remove_ceiling: true
       ceiling_distance: 1.5        # 天花板在相机上方1.5m
       
-      # 聚类参数
-      cluster_tolerance: 0.35      # 点之间最大距离（较大值，适应远距离点云稀疏）
-      min_cluster_size: 25         # 最小点数
+      # RANSAC地面检测（适合相机倾斜场景，自动检测倾斜地面并去除）
+      use_ransac_ground: true       # person端启用，因为相机可能朝地面倾斜
+      ransac_ground_threshold: 0.15 # 点到地面平面的最大距离（米）
+      
+      # 聚类参数 - 减小tolerance分离独立障碍物
+      cluster_tolerance: 0.15      # 减小容差，避免把相邻物体合成一个（0.15m=15cm）
+      min_cluster_size: 15         # 减小最小点数（分开后每个簇更小）
       max_cluster_size: 20000      # 最大点数
       
       # 椭圆放大系数（安全裕度，1.0=实际大小）
@@ -57,6 +61,10 @@ obstacle_detection_node:
       remove_ceiling: true
       ceiling_distance: 2.8        # 天花板在相机上方2.8m
       
+      # RANSAC地面检测
+      use_ransac_ground: false      # dog端一般水平安装，不需要RANSAC
+      ransac_ground_threshold: 0.10
+      
       # 聚类参数 - 更严格以减少误检
       cluster_tolerance: 0.15      # 减小容差，避免多个物体合并
       min_cluster_size: 40         # 增加最小点数，减少噪声
@@ -66,8 +74,7 @@ obstacle_detection_node:
       ellipse_scale_factor: 1.0
     
     # ============ 通用参数 ============
-    # RANSAC地面检测（可选，更精确但更慢）
-    use_ransac_ground: false
+    # 注：RANSAC地面检测已改为按相机独立配置（person.use_ransac_ground / dog.use_ransac_ground）
     ground_threshold: 0.15
     
     # 障碍物过滤参数（米）

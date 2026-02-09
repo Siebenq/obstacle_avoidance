@@ -42,6 +42,8 @@ class ObstacleDetectionNode : public rclcpp::Node
     double ground_distance;
     bool remove_ceiling;
     double ceiling_distance;
+    bool use_ransac_ground;         // 是否使用RANSAC去地面（适合倾斜相机）
+    double ransac_ground_threshold; // RANSAC平面距离阈值
     double cluster_tolerance;
     int min_cluster_size;
     int max_cluster_size;
@@ -73,6 +75,8 @@ public:
     this->declare_parameter<double>("person.ground_distance", 1.6);
     this->declare_parameter<bool>("person.remove_ceiling", true);
     this->declare_parameter<double>("person.ceiling_distance", 1.5);
+    this->declare_parameter<bool>("person.use_ransac_ground", true);      // person端默认启用RANSAC
+    this->declare_parameter<double>("person.ransac_ground_threshold", 0.15);
     this->declare_parameter<double>("person.cluster_tolerance", 0.3);
     this->declare_parameter<int>("person.min_cluster_size", 30);
     this->declare_parameter<int>("person.max_cluster_size", 15000);
@@ -88,6 +92,8 @@ public:
     this->declare_parameter<double>("dog.ground_distance", 0.4);
     this->declare_parameter<bool>("dog.remove_ceiling", true);
     this->declare_parameter<double>("dog.ceiling_distance", 2.5);
+    this->declare_parameter<bool>("dog.use_ransac_ground", false);       // dog端默认不启用
+    this->declare_parameter<double>("dog.ransac_ground_threshold", 0.10);
     this->declare_parameter<double>("dog.cluster_tolerance", 0.2);
     this->declare_parameter<int>("dog.min_cluster_size", 30);
     this->declare_parameter<int>("dog.max_cluster_size", 8000);
@@ -121,6 +127,8 @@ public:
     person_params_.ground_distance = this->get_parameter("person.ground_distance").as_double();
     person_params_.remove_ceiling = this->get_parameter("person.remove_ceiling").as_bool();
     person_params_.ceiling_distance = this->get_parameter("person.ceiling_distance").as_double();
+    person_params_.use_ransac_ground = this->get_parameter("person.use_ransac_ground").as_bool();
+    person_params_.ransac_ground_threshold = this->get_parameter("person.ransac_ground_threshold").as_double();
     person_params_.cluster_tolerance = this->get_parameter("person.cluster_tolerance").as_double();
     person_params_.min_cluster_size = this->get_parameter("person.min_cluster_size").as_int();
     person_params_.max_cluster_size = this->get_parameter("person.max_cluster_size").as_int();
@@ -136,6 +144,8 @@ public:
     dog_params_.ground_distance = this->get_parameter("dog.ground_distance").as_double();
     dog_params_.remove_ceiling = this->get_parameter("dog.remove_ceiling").as_bool();
     dog_params_.ceiling_distance = this->get_parameter("dog.ceiling_distance").as_double();
+    dog_params_.use_ransac_ground = this->get_parameter("dog.use_ransac_ground").as_bool();
+    dog_params_.ransac_ground_threshold = this->get_parameter("dog.ransac_ground_threshold").as_double();
     dog_params_.cluster_tolerance = this->get_parameter("dog.cluster_tolerance").as_double();
     dog_params_.min_cluster_size = this->get_parameter("dog.min_cluster_size").as_int();
     dog_params_.max_cluster_size = this->get_parameter("dog.max_cluster_size").as_int();
@@ -250,10 +260,10 @@ private:
         return;
       }
       
-      // ============ 步骤4: 可选RANSAC精确地面去除 ============
+      // ============ 步骤4: 可选RANSAC精确地面去除（按相机配置）============
       pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_final(new pcl::PointCloud<pcl::PointXYZ>);
-      if (use_ransac_ground_) {
-        removeGroundRANSAC(cloud_downsampled, cloud_final);
+      if (params.use_ransac_ground) {
+        removeGroundRANSAC(cloud_downsampled, cloud_final, params.ransac_ground_threshold);
       } else {
         cloud_final = cloud_downsampled;
       }
@@ -374,6 +384,12 @@ private:
     double ground_margin = 0.1;  // 10cm
     double ceiling_margin = 0.1; // 10cm
     
+    // 如果启用了RANSAC地面检测，PassThrough只做粗略过滤（放宽地面边距）
+    // 让RANSAC来精确去除倾斜地面
+    if (params.use_ransac_ground) {
+      ground_margin = -0.1;  // 负值=保留更多地面附近的点，交给RANSAC处理
+    }
+    
     if (is_optical_frame_) {
       // 光学坐标系: Y轴向下
       // 相机在 Y=0
@@ -389,8 +405,9 @@ private:
       
       pass.setFilterLimits(y_min, y_max);
       
-      RCLCPP_INFO_ONCE(this->get_logger(), "[optical] 垂直过滤Y轴: %.2f ~ %.2f (地面距离:%.1f, 天花板距离:%.1f)", 
-                       y_min, y_max, params.ground_distance, params.ceiling_distance);
+      RCLCPP_INFO_ONCE(this->get_logger(), "[optical] 垂直过滤Y轴: %.2f ~ %.2f (地面距离:%.1f, 天花板距离:%.1f, RANSAC:%s)", 
+                       y_min, y_max, params.ground_distance, params.ceiling_distance,
+                       params.use_ransac_ground ? "开" : "关");
     } else {
       // 标准坐标系: Z轴向上
       // 相机在某个Z高度，通常设为0
@@ -429,10 +446,20 @@ private:
   }
   
   /**
-   * @brief 使用RANSAC去除地面
+   * @brief 使用RANSAC去除地面（支持倾斜相机）
+   * 
+   * 使用 SACMODEL_PERPENDICULAR_PLANE 限制法向量方向，
+   * 确保只检测接近水平的平面（地面），不会误删墙壁等垂直面。
+   * 对于 optical frame: 地面法向量接近 Y 轴方向
+   * 对于 standard frame: 地面法向量接近 Z 轴方向
+   * 
+   * @param max_angle_deg 法向量与期望方向的最大偏差角度（度），
+   *        允许一定倾斜（如相机倾斜30°则设为35°左右）
    */
   void removeGroundRANSAC(const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud_in,
-                          pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud_out)
+                          pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud_out,
+                          double distance_threshold,
+                          double max_angle_deg = 30.0)
   {
     if (cloud_in->points.size() < 100) {
       *cloud_out = *cloud_in;
@@ -444,21 +471,43 @@ private:
     
     pcl::SACSegmentation<pcl::PointXYZ> seg;
     seg.setOptimizeCoefficients(true);
-    seg.setModelType(pcl::SACMODEL_PLANE);
     seg.setMethodType(pcl::SAC_RANSAC);
-    seg.setDistanceThreshold(ground_threshold_);
+    seg.setDistanceThreshold(distance_threshold);
+    seg.setMaxIterations(200);
+    
+    // 使用法向量约束，只检测接近水平的平面（地面）
+    // 这样即使相机倾斜，也只会找到地面平面，不会误删墙壁
+    seg.setModelType(pcl::SACMODEL_PERPENDICULAR_PLANE);
+    
+    if (is_optical_frame_) {
+      // optical frame: Y 轴是垂直方向（向下）
+      seg.setAxis(Eigen::Vector3f(0.0f, 1.0f, 0.0f));
+    } else {
+      // standard frame: Z 轴是垂直方向（向上）
+      seg.setAxis(Eigen::Vector3f(0.0f, 0.0f, 1.0f));
+    }
+    // 允许法向量偏离的最大角度（弧度），适应倾斜相机
+    seg.setEpsAngle(max_angle_deg * M_PI / 180.0);
+    
     seg.setInputCloud(cloud_in);
     seg.segment(*inliers, *coefficients);
     
     if (inliers->indices.empty()) {
+      RCLCPP_DEBUG(this->get_logger(), "RANSAC未检测到地面平面");
       *cloud_out = *cloud_in;
       return;
     }
     
+    RCLCPP_INFO_ONCE(this->get_logger(), 
+      "RANSAC地面检测: 法向量=(%.2f,%.2f,%.2f), d=%.2f, 内点数=%zu/%zu",
+      coefficients->values[0], coefficients->values[1], 
+      coefficients->values[2], coefficients->values[3],
+      inliers->indices.size(), cloud_in->points.size());
+    
     pcl::ExtractIndices<pcl::PointXYZ> extract;
     extract.setInputCloud(cloud_in);
     extract.setIndices(inliers);
-    extract.setNegative(true);
+    extract.setNegative(true);  // 保留非地面点
     extract.filter(*cloud_out);
   }
   
