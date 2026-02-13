@@ -1,0 +1,58 @@
+icp_calibration_node:
+  ros__parameters:
+    # 输入话题
+    topic1: "/camera_dog/points"              # dog端点云（参考坐标系）
+    topic2: "/camera_person/points"           # person端点云（被变换坐标系）
+    
+    # 输出话题
+    output_topic: "/icp_transform"
+    
+    # ============ TF 坐标系名称 ============
+    # ICP 动态变换: topic1_frame → topic2_frame
+    topic1_frame: "camera_depth_optical_frame"              # topic1 的坐标系
+    topic2_frame: "person_camera_depth_optical_frame"       # topic2 的坐标系
+    
+    # ============ camera_link → trunk 静态变换 ============
+    # 深度相机在机器人躯体坐标系中的安装位置
+    camera_link_frame: "camera_link"
+    trunk_frame: "trunk"
+    camera_to_trunk_x: 0.2                    # 深度相机在躯体X方向的偏移（米）
+    camera_to_trunk_y: 0.0                    # 深度相机在躯体Y方向的偏移（米）
+    camera_to_trunk_z: 0.05                   # 深度相机在躯体Z方向的偏移（米）
+    camera_to_trunk_roll: 0.0                 # 绕X轴旋转（弧度）
+    camera_to_trunk_pitch: 0.0                # 绕Y轴旋转（弧度）
+    camera_to_trunk_yaw: 0.0                  # 绕Z轴旋转（弧度）
+    
+    # ============ ICP算法参数 ============
+    max_correspondence_distance: 2.0          # 最大对应点距离（米）
+    max_iterations: 100                       # 最大迭代次数
+    transformation_epsilon: 1e-8              # 变换收敛阈值
+    euclidean_fitness_epsilon: 1e-4           # 欧几里得适配度阈值
+    
+    # ============ 点云预处理参数 ============
+    use_voxel_filter: true
+    voxel_leaf_size: 0.08                     # 体素大小（米）
+    use_outlier_removal: false
+    outlier_mean_k: 50
+    outlier_stddev_mul: 1.0
+    
+    # ============ 点云裁剪参数 ============
+    use_crop: true
+    crop_x_min: -10.0
+    crop_x_max: 10.0
+    crop_y_min: -10.0
+    crop_y_max: 10.0
+    crop_z_min: -2.0
+    crop_z_max: 5.0
+    
+    # ============ 标定触发参数 ============
+    auto_calibrate: true
+    calibration_interval: 5.0                 # 自动标定间隔（秒）
+    min_points_required: 100
+    
+    # ============ 初始变换估计 ============
+    use_initial_guess: true
+    initial_x: -0.353
+    initial_y: -0.353
+    initial_z: 1.6
+    initial_yaw: 0.7854                       # 45° = π/4

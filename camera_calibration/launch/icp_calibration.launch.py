@@ -9,22 +9,21 @@ from launch_ros.actions import Node
 def generate_launch_description():
     # 获取配置文件路径
     config_file = os.path.join(
-        get_package_share_directory('video_client'),
+        get_package_share_directory('camera_calibration'),
         'config',
-        'network_params.yaml'
+        'icp_calibration_params.yaml'
     )
     
-    # 网络接收节点
-    network_receiver_node = Node(
-        package='video_client',
-        executable='network_receiver_node',
-        name='network_receiver_node',
+    # ICP标定节点
+    icp_calibration_node = Node(
+        package='camera_calibration',
+        executable='icp_calibration_node',
+        name='icp_calibration_node',
         output='screen',
         parameters=[config_file],
         emulate_tty=True
     )
     
     return LaunchDescription([
-        network_receiver_node
+        icp_calibration_node
     ])
-

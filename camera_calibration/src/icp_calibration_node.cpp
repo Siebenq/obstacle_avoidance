@@ -10,7 +10,15 @@
 #include <pcl/filters/crop_box.h>
 #include <Eigen/Dense>
 
-#include "obstacle_avoidance/msg/transform_matrix.hpp"
+// TF2
+#include <tf2_ros/transform_broadcaster.h>
+#include <tf2_ros/static_transform_broadcaster.h>
+#include <geometry_msgs/msg/transform_stamped.hpp>
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2/LinearMath/Matrix3x3.h>
+
+// 标准消息（用于发布变换矩阵到话题）
+// 使用 geometry_msgs::msg::TransformStamped 作为话题消息，标准通用格式
 
 /**
  * @brief ICP点云标定节点
@@ -19,6 +27,8 @@
  * 1. 订阅两个点云话题 topic1 和 topic2
  * 2. 使用PCL的ICP算法计算两个点云坐标系之间的外参
  * 3. 将变换矩阵（Eigen::Matrix4f）发布到话题
+ * 4. 将 topic2→topic1 的变换发布到 TF 树
+ * 5. 发布 camera_link→trunk 的静态变换
  */
 class ICPCalibrationNode : public rclcpp::Node
 {
@@ -30,6 +40,20 @@ public:
     this->declare_parameter<std::string>("topic2", "/camera2/points");
     this->declare_parameter<std::string>("output_topic", "/icp_transform");
     
+    // topic1 和 topic2 的坐标系名称（用于 TF 发布）
+    this->declare_parameter<std::string>("topic1_frame", "camera_depth_optical_frame");
+    this->declare_parameter<std::string>("topic2_frame", "person_camera_depth_optical_frame");
+    
+    // camera_link → trunk 静态变换参数
+    this->declare_parameter<std::string>("camera_link_frame", "camera_link");
+    this->declare_parameter<std::string>("trunk_frame", "trunk");
+    this->declare_parameter<double>("camera_to_trunk_x", 0.2);
+    this->declare_parameter<double>("camera_to_trunk_y", 0.0);
+    this->declare_parameter<double>("camera_to_trunk_z", 0.05);
+    this->declare_parameter<double>("camera_to_trunk_roll", 0.0);
+    this->declare_parameter<double>("camera_to_trunk_pitch", 0.0);
+    this->declare_parameter<double>("camera_to_trunk_yaw", 0.0);
+    
     // ICP参数
     this->declare_parameter<double>("max_correspondence_distance", 0.3);
     this->declare_parameter<int>("max_iterations", 50);
@@ -39,11 +63,11 @@ public:
     // 点云预处理参数
     this->declare_parameter<bool>("use_voxel_filter", true);
     this->declare_parameter<double>("voxel_leaf_size", 0.05);
-    this->declare_parameter<bool>("use_outlier_removal", false);  // 关闭以提速
+    this->declare_parameter<bool>("use_outlier_removal", false);
     this->declare_parameter<int>("outlier_mean_k", 50);
     this->declare_parameter<double>("outlier_stddev_mul", 1.0);
     
-    // 点云裁剪参数（只处理重叠区域，大幅提速）
+    // 点云裁剪参数
     this->declare_parameter<bool>("use_crop", true);
     this->declare_parameter<double>("crop_x_min", -5.0);
     this->declare_parameter<double>("crop_x_max", 5.0);
@@ -54,20 +78,32 @@ public:
     
     // 标定触发参数
     this->declare_parameter<bool>("auto_calibrate", true);
-    this->declare_parameter<double>("calibration_interval", 5.0);  // 秒
+    this->declare_parameter<double>("calibration_interval", 5.0);
     this->declare_parameter<int>("min_points_required", 100);
     
-    // 初始变换估计参数（用于提高ICP收敛）
+    // 初始变换估计参数
     this->declare_parameter<bool>("use_initial_guess", true);
-    this->declare_parameter<double>("initial_x", -1.131);  // 左后方45°，距离1.6m的水平分量
-    this->declare_parameter<double>("initial_y", -1.131);  // 左后方45°，距离1.6m的水平分量
-    this->declare_parameter<double>("initial_z", 1.6);     // 高度
-    this->declare_parameter<double>("initial_yaw", 0.7854); // 45° = π/4 rad
+    this->declare_parameter<double>("initial_x", -1.131);
+    this->declare_parameter<double>("initial_y", -1.131);
+    this->declare_parameter<double>("initial_z", 1.6);
+    this->declare_parameter<double>("initial_yaw", 0.7854);
     
     // 获取参数
     topic1_ = this->get_parameter("topic1").as_string();
     topic2_ = this->get_parameter("topic2").as_string();
     output_topic_ = this->get_parameter("output_topic").as_string();
+    
+    topic1_frame_ = this->get_parameter("topic1_frame").as_string();
+    topic2_frame_ = this->get_parameter("topic2_frame").as_string();
+    
+    camera_link_frame_ = this->get_parameter("camera_link_frame").as_string();
+    trunk_frame_ = this->get_parameter("trunk_frame").as_string();
+    camera_to_trunk_x_ = this->get_parameter("camera_to_trunk_x").as_double();
+    camera_to_trunk_y_ = this->get_parameter("camera_to_trunk_y").as_double();
+    camera_to_trunk_z_ = this->get_parameter("camera_to_trunk_z").as_double();
+    camera_to_trunk_roll_ = this->get_parameter("camera_to_trunk_roll").as_double();
+    camera_to_trunk_pitch_ = this->get_parameter("camera_to_trunk_pitch").as_double();
+    camera_to_trunk_yaw_ = this->get_parameter("camera_to_trunk_yaw").as_double();
     
     max_correspondence_distance_ = this->get_parameter("max_correspondence_distance").as_double();
     max_iterations_ = this->get_parameter("max_iterations").as_int();
@@ -101,14 +137,12 @@ public:
     // 计算初始变换矩阵
     if (use_initial_guess_) {
       initial_transform_ = Eigen::Matrix4f::Identity();
-      // 旋转矩阵 (绕Z轴旋转yaw角)
       float cos_yaw = std::cos(initial_yaw_);
       float sin_yaw = std::sin(initial_yaw_);
       initial_transform_(0, 0) = cos_yaw;
       initial_transform_(0, 1) = -sin_yaw;
       initial_transform_(1, 0) = sin_yaw;
       initial_transform_(1, 1) = cos_yaw;
-      // 平移
       initial_transform_(0, 3) = initial_x_;
       initial_transform_(1, 3) = initial_y_;
       initial_transform_(2, 3) = initial_z_;
@@ -117,8 +151,6 @@ public:
       RCLCPP_INFO(this->get_logger(), "  平移: (%.3f, %.3f, %.3f)", initial_x_, initial_y_, initial_z_);
       RCLCPP_INFO(this->get_logger(), "  偏航角: %.2f° (%.4f rad)", initial_yaw_ * 180.0 / M_PI, initial_yaw_);
     }
-    
-
 
     // 创建订阅者
     cloud1_sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
@@ -129,11 +161,16 @@ public:
       topic2_, 10,
       std::bind(&ICPCalibrationNode::cloud2_callback, this, std::placeholders::_1));
     
-    // 创建发布者
-    transform_pub_ = this->create_publisher<obstacle_avoidance::msg::TransformMatrix>(
+    // 创建发布者（使用标准 TransformStamped 消息格式）
+    transform_pub_ = this->create_publisher<geometry_msgs::msg::TransformStamped>(
       output_topic_, 10);
     
+    // 创建 TF 广播器
+    tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
+    static_tf_broadcaster_ = std::make_shared<tf2_ros::StaticTransformBroadcaster>(*this);
 
+    // 发布 camera_link → trunk 的静态变换
+    publishStaticCameraToTrunkTF();
 
     // 自动标定定时器
     if (auto_calibrate_) {
@@ -143,9 +180,90 @@ public:
     }
     
     RCLCPP_INFO(this->get_logger(), "ICP标定节点已启动");
+    RCLCPP_INFO(this->get_logger(), "  TF 广播: %s → %s (ICP动态变换)", 
+                topic1_frame_.c_str(), topic2_frame_.c_str());
+    RCLCPP_INFO(this->get_logger(), "  TF 静态: %s → %s (相机安装位置)", 
+                trunk_frame_.c_str(), camera_link_frame_.c_str());
   }
 
 private:
+  /**
+   * @brief 发布 camera_link → trunk 的静态 TF
+   * 
+   * 描述深度相机相对于机器人躯体的安装位置。
+   * 在 TF 树中: trunk 是 parent, camera_link 是 child
+   */
+  void publishStaticCameraToTrunkTF()
+  {
+    geometry_msgs::msg::TransformStamped static_tf;
+    static_tf.header.stamp = this->now();
+    static_tf.header.frame_id = trunk_frame_;       // parent: 机器人躯体
+    static_tf.child_frame_id = camera_link_frame_;   // child: 深度相机
+    
+    // 平移（深度相机在躯体坐标系中的位置）
+    static_tf.transform.translation.x = camera_to_trunk_x_;
+    static_tf.transform.translation.y = camera_to_trunk_y_;
+    static_tf.transform.translation.z = camera_to_trunk_z_;
+    
+    // 旋转（使用 RPY 转四元数）
+    tf2::Quaternion q;
+    q.setRPY(camera_to_trunk_roll_, camera_to_trunk_pitch_, camera_to_trunk_yaw_);
+    static_tf.transform.rotation.x = q.x();
+    static_tf.transform.rotation.y = q.y();
+    static_tf.transform.rotation.z = q.z();
+    static_tf.transform.rotation.w = q.w();
+    
+    static_tf_broadcaster_->sendTransform(static_tf);
+    
+    RCLCPP_INFO(this->get_logger(), "已发布静态TF: %s → %s (平移: %.3f, %.3f, %.3f)",
+                trunk_frame_.c_str(), camera_link_frame_.c_str(),
+                camera_to_trunk_x_, camera_to_trunk_y_, camera_to_trunk_z_);
+  }
+  
+  /**
+   * @brief 将 ICP 变换矩阵发布到 TF 树
+   * 
+   * ICP 计算的是 cloud2 → cloud1 的变换（将 topic2 的点云对齐到 topic1）
+   * 在 TF 树中: topic1_frame 是 parent, topic2_frame 是 child
+   * 
+   * @param transform 4x4 变换矩阵 (cloud2 → cloud1)
+   */
+  void publishICPTransformTF(const Eigen::Matrix4f& transform)
+  {
+    geometry_msgs::msg::TransformStamped tf_msg;
+    tf_msg.header.stamp = this->now();
+    tf_msg.header.frame_id = topic1_frame_;   // parent: topic1的坐标系 (camera_depth_optical_frame)
+    tf_msg.child_frame_id = topic2_frame_;    // child: topic2的坐标系 (person_camera_depth_optical_frame)
+    
+    // ICP 变换 T 将 cloud2 中的点变换到 cloud1 坐标系: p1 = T * p2
+    // 但 TF 中存储的是 child 坐标系原点在 parent 坐标系中的位姿
+    // 对于 T 将 child 中的点变换到 parent: TF 存储 T 的逆
+    // 即 TF(parent→child) = T^{-1}
+    Eigen::Matrix4f tf_transform = transform.inverse();
+    
+    // 提取平移
+    tf_msg.transform.translation.x = tf_transform(0, 3);
+    tf_msg.transform.translation.y = tf_transform(1, 3);
+    tf_msg.transform.translation.z = tf_transform(2, 3);
+    
+    // 提取旋转矩阵并转为四元数
+    Eigen::Matrix3f rotation = tf_transform.block<3, 3>(0, 0);
+    Eigen::Quaternionf q(rotation);
+    q.normalize();
+    
+    tf_msg.transform.rotation.x = q.x();
+    tf_msg.transform.rotation.y = q.y();
+    tf_msg.transform.rotation.z = q.z();
+    tf_msg.transform.rotation.w = q.w();
+    
+    tf_broadcaster_->sendTransform(tf_msg);
+    
+    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+      "已发布TF: %s → %s (平移: %.3f, %.3f, %.3f)",
+      topic1_frame_.c_str(), topic2_frame_.c_str(),
+      tf_msg.transform.translation.x, tf_msg.transform.translation.y, tf_msg.transform.translation.z);
+  }
+  
   /**
    * @brief 点云1回调函数
    */
@@ -244,7 +362,7 @@ private:
       RCLCPP_WARN(this->get_logger(), "   建议: 扩大裁剪范围或减小体素大小（当前: %.3f）", voxel_leaf_size_);
     }
     
-    // 配置ICP - 优化参数以平衡速度和精度
+    // 配置ICP
     pcl::IterativeClosestPoint<pcl::PointXYZ, pcl::PointXYZ> icp;
     icp.setInputSource(cloud2_processed);  // cloud2作为源（要变换的点云）
     icp.setInputTarget(cloud1_processed);  // cloud1作为目标（参考点云）
@@ -255,9 +373,8 @@ private:
     double adaptive_distance = max_correspondence_distance_;
     int adaptive_iterations = max_iterations_;
     
-    // 点数少时可以用更多迭代，点数多时减少迭代
     if (cloud1_processed->points.size() > 5000 || cloud2_processed->points.size() > 5000) {
-      adaptive_iterations = std::min(30, max_iterations_);  // 点多时减少迭代
+      adaptive_iterations = std::min(30, max_iterations_);
       RCLCPP_INFO(this->get_logger(), "  点云较密集，减少迭代次数至 %d", adaptive_iterations);
     }
     
@@ -271,7 +388,6 @@ private:
     
     auto icp_start = std::chrono::high_resolution_clock::now();
     
-    // 使用初始变换估计
     if (use_initial_guess_) {
       RCLCPP_INFO(this->get_logger(), "  使用初始变换估计进行ICP配准");
       icp.align(*aligned_cloud, initial_transform_);
@@ -339,11 +455,13 @@ private:
     // 计算RMSE
     double rmse = std::sqrt(fitness_score);
     
-    // 发布正变换
+    // ============ 发布 /icp_transform 话题 ============
     publishTransform(transformation, fitness_score, rmse, converged,
                      cloud2_msg_->header.frame_id, cloud1_msg_->header.frame_id,
                      cloud2->points.size(), cloud1->points.size());
     
+    // ============ 发布 TF: topic1_frame → topic2_frame ============
+    publishICPTransformTF(transformation);
   }
   
   /**
@@ -354,7 +472,7 @@ private:
   {
     pcl::PointCloud<pcl::PointXYZ>::Ptr processed_cloud = cloud;
     
-    // 1. 裁剪点云（只保留感兴趣区域，大幅提速）
+    // 1. 裁剪点云
     if (use_crop_) {
       pcl::PointCloud<pcl::PointXYZ>::Ptr cropped(new pcl::PointCloud<pcl::PointXYZ>);
       pcl::CropBox<pcl::PointXYZ> crop_box;
@@ -370,7 +488,7 @@ private:
       }
     }
     
-    // 2. 体素滤波降采样（减少计算量）
+    // 2. 体素滤波降采样
     if (use_voxel_filter_ && processed_cloud->points.size() > 1000) {
       pcl::PointCloud<pcl::PointXYZ>::Ptr voxel_filtered(new pcl::PointCloud<pcl::PointXYZ>);
       pcl::VoxelGrid<pcl::PointXYZ> voxel_grid;
@@ -380,7 +498,7 @@ private:
       processed_cloud = voxel_filtered;
     }
     
-    // 3. 统计离群点去除（可选，较慢）
+    // 3. 统计离群点去除（可选）
     if (use_outlier_removal_ && processed_cloud->points.size() > 500) {
       pcl::PointCloud<pcl::PointXYZ>::Ptr outlier_removed(new pcl::PointCloud<pcl::PointXYZ>);
       pcl::StatisticalOutlierRemoval<pcl::PointXYZ> sor;
@@ -395,49 +513,56 @@ private:
   }
   
   /**
-   * @brief 发布变换矩阵
+   * @brief 发布变换矩阵话题（使用标准 TransformStamped 格式）
+   * 
+   * 发布的变换表示 source_frame 在 target_frame 中的位姿，
+   * 即将 source_frame 中的点变换到 target_frame 的变换。
    */
   void publishTransform(const Eigen::Matrix4f& transform, 
                        double fitness_score, double rmse, bool converged,
                        const std::string& source_frame, const std::string& target_frame,
-                       int source_points, int target_points)
+                       [[maybe_unused]] int source_points, [[maybe_unused]] int target_points)
   {
-    obstacle_avoidance::msg::TransformMatrix msg;
+    geometry_msgs::msg::TransformStamped msg;
     
-    // 设置header
     msg.header.stamp = this->now();
-    msg.header.frame_id = "icp_calibration";
+    msg.header.frame_id = target_frame;     // parent frame
+    msg.child_frame_id = source_frame;      // child frame
     
-    // 转换矩阵为行优先数组
-    for (int i = 0; i < 16; ++i) {
-      msg.matrix[i] = transform(i);
-   }
-
-    // 设置质量指标
-    msg.fitness_score = fitness_score;
-    msg.num_iterations = max_iterations_;  // PCL的ICP不直接提供实际迭代次数
-    msg.converged = converged;
-    msg.rmse = rmse;
+    // 从4x4矩阵中提取平移
+    msg.transform.translation.x = transform(0, 3);
+    msg.transform.translation.y = transform(1, 3);
+    msg.transform.translation.z = transform(2, 3);
     
-    // 设置坐标系信息
-    msg.source_frame_id = source_frame;
-    msg.target_frame_id = target_frame;
-    msg.source_points = source_points;
-    msg.target_points = target_points;
+    // 从4x4矩阵中提取旋转并转为四元数
+    Eigen::Matrix3f rotation = transform.block<3, 3>(0, 0);
+    Eigen::Quaternionf q(rotation);
+    q.normalize();
     
-    // 发布
+    msg.transform.rotation.x = q.x();
+    msg.transform.rotation.y = q.y();
+    msg.transform.rotation.z = q.z();
+    msg.transform.rotation.w = q.w();
+    
     transform_pub_->publish(msg);
+    
+    // 在日志中记录标定质量信息（原先存在自定义消息中的元数据）
+    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 10000,
+      "已发布ICP变换到话题 %s (收敛: %s, 适配度: %.6f, RMSE: %.6f)",
+      output_topic_.c_str(), converged ? "是" : "否", fitness_score, rmse);
   }
   
+  // ==================== 成员变量 ====================
 
-
-
-
-  // ROS相关
+  // ROS 订阅者/发布者
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud1_sub_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud2_sub_;
-  rclcpp::Publisher<obstacle_avoidance::msg::TransformMatrix>::SharedPtr transform_pub_;
+  rclcpp::Publisher<geometry_msgs::msg::TransformStamped>::SharedPtr transform_pub_;
   rclcpp::TimerBase::SharedPtr calibration_timer_;
+  
+  // TF 广播器
+  std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
+  std::shared_ptr<tf2_ros::StaticTransformBroadcaster> static_tf_broadcaster_;
   
   // 点云数据
   sensor_msgs::msg::PointCloud2::SharedPtr cloud1_msg_;
@@ -445,10 +570,20 @@ private:
   bool has_cloud1_ = false;
   bool has_cloud2_ = false;
   
-  // 参数
+  // 话题参数
   std::string topic1_;
   std::string topic2_;
   std::string output_topic_;
+  
+  // TF 坐标系名称
+  std::string topic1_frame_;
+  std::string topic2_frame_;
+  std::string camera_link_frame_;
+  std::string trunk_frame_;
+  
+  // camera_link → trunk 静态变换参数
+  double camera_to_trunk_x_, camera_to_trunk_y_, camera_to_trunk_z_;
+  double camera_to_trunk_roll_, camera_to_trunk_pitch_, camera_to_trunk_yaw_;
   
   // ICP参数
   double max_correspondence_distance_;

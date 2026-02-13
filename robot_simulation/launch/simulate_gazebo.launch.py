@@ -8,7 +8,7 @@ def generate_launch_description():
     urdf_path=get_package_share_directory('robot_simulation')
     model_path=urdf_path+'/urdf/ubot.urdf.xacro'
     # model2_path=urdf_path+'/urdf2/ubot2.urdf.xacro'
-    world_path=urdf_path+'/world/obstacle.world'
+    world_path=urdf_path+'/world/room.world'
 
     declare_path=launch.actions.DeclareLaunchArgument(
         name='model',
@@ -66,7 +66,7 @@ def generate_launch_description():
         package='gazebo_ros',
         executable='spawn_entity.py',
         arguments=['-topic', '/r1/robot_description', '-entity', 'model',
-                    '-x', '-1.0', '-y', '0.0', '-z', '0.0', 
+                    '-x', '0.0', '-y', '0.0', '-z', '0.0', 
                     '-R', '0.0', '-P', '0.0', '-Y', '0.0']
     )
 
