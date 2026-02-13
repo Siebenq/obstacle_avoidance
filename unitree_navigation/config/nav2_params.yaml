@@ -7,11 +7,15 @@
 amcl:
   ros__parameters:
     use_sim_time: True
-    alpha1: 0.2
-    alpha2: 0.2
-    alpha3: 0.2
-    alpha4: 0.2
-    alpha5: 0.2
+    # ⚠ 运动模型噪声：从0.2降至0.05
+    # 原值0.2导致粒子在每次运动后扩散过快，
+    # 而90°窄视角深度相机只能提供有限的观测约束，
+    # 粒子来不及收敛就又被扩散 → 始终分散
+    alpha1: 0.05
+    alpha2: 0.05
+    alpha3: 0.05
+    alpha4: 0.05
+    alpha5: 0.05
     base_frame_id: "base_footprint"
     beam_skip_distance: 0.5
     beam_skip_error_threshold: 0.9
@@ -23,9 +27,11 @@ amcl:
     laser_max_range: 10.0
     laser_min_range: 0.3
     laser_model_type: "likelihood_field"
-    max_beams: 30               # 减少beam数（深度相机视角窄，beam太多无意义）
-    max_particles: 3000         # 增加粒子数（补偿视角不足导致的定位不确定性）
-    min_particles: 800
+    # ⚠ 从30增至60：深度相机86°FOV可产生~172个有效beam，
+    # 30个采样太少导致AMCL约束不足；60个能覆盖大部分有效数据
+    max_beams: 60
+    max_particles: 2000         # 从3000降至2000：配合更好的参数，减少计算量
+    min_particles: 500
     odom_frame_id: "odom"
     pf_err: 0.05
     pf_z: 0.99
@@ -34,20 +40,25 @@ amcl:
     resample_interval: 1
     robot_model_type: "nav2_amcl::DifferentialMotionModel"
     save_pose_rate: 0.5
-    sigma_hit: 0.2
+    # ⚠ 从0.2增至0.5：深度相机的虚拟激光扫描比真实雷达噪声更大，
+    # 需要更宽的高斯容差来避免好的匹配被惩罚过重
+    sigma_hit: 0.5
     tf_broadcast: true
     transform_tolerance: 1.0
     update_min_a: 0.15          # 降低更新阈值，更频繁地更新位姿
     update_min_d: 0.15
-    z_hit: 0.5
+    # ⚠ 传感器模型权重调整：
+    # z_hit 0.5→0.8：将80%的权重放在实际地图匹配上（原来只有50%）
+    # z_rand 0.5→0.1：将随机噪声权重从50%降到10%
+    # 原来50% z_rand 意味着一半似然来自均匀随机分布，
+    # 严重削弱了扫描匹配的区分度，导致粒子无法收敛
+    z_hit: 0.8
     z_max: 0.05
-    z_rand: 0.5
+    z_rand: 0.1
     z_short: 0.05
     # 虚拟激光扫描话题（由 pointcloud_to_laserscan 从深度相机点云生成）
     scan_topic: /scan
-    # ⚠ 关键修复：自动设置初始位姿
-    # 没有初始位姿时 AMCL 不会发布 map→odom 变换，
-    # 导致全局代价地图报错 "Transform data too old" 且导航完全无法工作
+    # 自动设置初始位姿
     set_initial_pose: true
     always_reset_initial_pose: true
     initial_pose:
@@ -62,6 +73,7 @@ bt_navigator:
     global_frame: map
     robot_base_frame: base_link
     odom_topic: /odom
+    transform_tolerance: 0.5            # ⚠ 之前缺少此参数（默认0.1太小）
     bt_loop_duration: 10
     default_server_timeout: 20
     wait_for_service_timeout: 1000
@@ -204,8 +216,8 @@ controller_server:
 local_costmap:
   local_costmap:
     ros__parameters:
-      update_frequency: 5.0
-      publish_frequency: 2.0
+      update_frequency: 2.0             # 从5.0降至2.0：640×480点云处理非常耗CPU，降低频率显著减轻负载
+      publish_frequency: 1.0            # 从2.0降至1.0：减少代价地图发布频率
       global_frame: odom
       robot_base_frame: base_link
       use_sim_time: True
@@ -354,7 +366,7 @@ waypoint_follower:
 velocity_smoother:
   ros__parameters:
     use_sim_time: True
-    smoothing_frequency: 20.0
+    smoothing_frequency: 10.0           # 从20降至10：无需高于controller_frequency(10Hz)，减少CPU占用
     scale_velocities: False
     feedback: "OPEN_LOOP"
     max_velocity: [0.26, 0.0, 1.0]

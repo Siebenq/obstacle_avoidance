@@ -108,16 +108,14 @@
         <plugin name="auxiliary_depth_camera" filename="libgazebo_ros_camera.so">
             <ros>
                 <namespace>/</namespace>
-                <remapping>~/image_raw:=auxiliary_depth_camera/image_raw</remapping>
-                <remapping>~/depth/image_raw:=auxiliary_depth_camera/depth/image_raw</remapping>
-                <remapping>~/camera_info:=auxiliary_depth_camera/camera_info</remapping>
-                <remapping>~/depth/camera_info:=auxiliary_depth_camera/depth/camera_info</remapping>
-                <remapping>~/points:=auxiliary_depth_camera/points</remapping>
             </ros>
             <frame_name>auxiliary_depth_camera_optical_link</frame_name>
         </plugin>
         <always_on>true</always_on>
-        <update_rate>10</update_rate>
+        <!-- ⚠ 从10Hz降至5Hz：640×480的点云@10Hz产生巨大计算负载
+             （pointcloud_to_laserscan + VoxelLayer + AMCL 都要处理），
+             5Hz足够导航使用，CPU负载直接减半 -->
+        <update_rate>5</update_rate>
         <camera name="auxiliary_depth_camera">
             <horizontal_fov>1.5009831567</horizontal_fov>
             <image>

@@ -41,18 +41,22 @@ def generate_launch_description():
             'use_sim_time': use_sim_time,
             # 目标坐标系：将点云转换到 base_link 后再切片
             'target_frame': 'base_link',
-            'transform_tolerance': 1.0,          # ⚠ 从0.1增大到1.0！防止TF延迟导致丢弃所有数据
-            # 高度切片范围（相对于 base_link，即机器人底盘）
+            'transform_tolerance': 1.0,
+            # ⚠ 高度切片范围（相对于 base_link 的Z轴）
+            # base_link 在地面以上约 0.091m 处
+            # min_height=0.1 → 地面以上约 0.19m（过滤地面噪声）
+            # max_height=1.5 → 地面以上约 1.59m（原1.0太窄，会丢失很多墙面点，
+            #   导致AMCL可用的扫描点太少，定位质量差）
             'min_height': 0.1,
-            'max_height': 1.0,
-            # 虚拟激光扫描的角度范围（弧度）
+            'max_height': 1.5,
+            # 角度范围：覆盖深度相机的86°水平FOV
             'angle_min': -0.7854,       # -45° (弧度)
             'angle_max': 0.7854,        #  45° (弧度)
             'angle_increment': 0.00872, # ~0.5° 分辨率
-            'scan_time': 0.1,           # 扫描周期 0.1s
-            'range_min': 0.3,           # 最小距离 0.3m（过滤近处噪声）
-            'range_max': 10.0,          # 最大距离 10m
-            'use_inf': True,            # 无效值用 inf 表示
+            'scan_time': 0.1,
+            'range_min': 0.3,
+            'range_max': 10.0,
+            'use_inf': True,
             'concurrency_level': 0,
         }],
         output='screen',
